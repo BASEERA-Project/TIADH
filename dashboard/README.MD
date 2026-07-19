@@ -7,7 +7,7 @@ python -m venv .venv
 ```
 2. Install dependencies:
 ```
-pip install streamlit
+pip install -r requirements.txt
 ```
 3. Run streamlit app:
 ```
