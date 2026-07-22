@@ -1,0 +1,12 @@
+{
+  "event_id": "62b7a1c5-a20e-49e3-9eb2-111111111111",
+  "node_id": "node-01",
+  "event_type": "heartbeat",
+  "timestamp": "2026-07-22T11:05:00Z",
+  "session_id": null,
+  "attacker_ip": null,
+  "protocol": null,
+  "details": {
+    "status": "online"
+  }
+}
