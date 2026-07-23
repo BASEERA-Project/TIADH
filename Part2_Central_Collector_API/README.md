@@ -18,7 +18,7 @@ This service receives the team-standardized honeypot events at `POST /api/events
 ## Quick start
 
 ```bash
-cd part2_central_collector
+cd Part2_Central_Collector_API
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
