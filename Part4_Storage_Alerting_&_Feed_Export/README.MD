@@ -2,8 +2,6 @@
 
 ## What it does
 
-This repository contains the database module for the **Threat Intelligence Aggregator from Distributed Honeypots** project.
-
 Its purpose is to:
 
 - Store logs collected from multiple Cowrie honeypots.
@@ -38,13 +36,6 @@ If SQLite is not installed (Ubuntu):
 ```bash
 sudo apt update
 sudo apt install sqlite3
-```
-
-Clone the repository:
-
-```bash
-git clone https://github.com/<your-username>/Threat-Intelligence-Database.git
-cd Threat-Intelligence-Database
 ```
 
 ---
