@@ -23,3 +23,5 @@ To deactivate venv session run this command:
 ```
 deactivate
 ```
+## Integration
+This dashboard expects a local SQLite database to read logs from sensors. You can set the database path inside secrets.toml
