@@ -1,0 +1,15 @@
+# Part 4 — Storage, Alerting & Feed Export
+#
+# There are NO mandatory third-party dependencies. Everything in the required
+# path (sqlite3, json, csv, uuid, argparse, unittest) ships with Python 3.10+.
+# That is deliberate: Part 4 is the component the other four depend on, so it
+# should never be the reason someone's environment will not build.
+
+# --- Optional: STIX 2.1 stretch goal -------------------------------------
+# The exporter produces spec-compliant STIX 2.1 without this. Installing it
+# adds schema validation on the way out.
+stix2>=3.0.1
+
+# --- Optional: development only ------------------------------------------
+# pytest>=8.0        # the suite also runs under plain `python -m unittest`
+# ruff>=0.6          # linting
