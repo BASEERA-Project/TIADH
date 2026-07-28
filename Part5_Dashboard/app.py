@@ -3,12 +3,18 @@ import pandas as pd
 import json
 import plotly.express as px
 
+from db.database import Database 
+
 st.set_page_config(page_title="TIADH Dashboard", layout="wide", page_icon="🛡️")
 st.title("TIADH Dashboard")
 
-conn = st.connection('db', type='sql')
+@st.cache_resource
+def get_db():
+    return Database(read_only=True)
 
-df = conn.query('SELECT * FROM events', ttl=10)
+db = get_db()
+
+df = pd.DataFrame(db.get_sessions())
 
 if not df.empty:
     total_attacks = len(df[df['event_type'] != 'heartbeat']) 
@@ -48,7 +54,7 @@ if not df.empty:
             )
             top_commands = command_events['parsed_command'].value_counts().reset_index().head(10)
             top_commands.columns = ['Command', 'Count']
-            
+
             # Upgrade to an interactive Plotly chart for commands
             fig_cmds = px.bar(top_commands, y='Count', x='Command')
             fig_cmds.update_layout(yaxis={'categoryorder':'total ascending'})
