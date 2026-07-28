@@ -387,7 +387,7 @@ def _bucket(timestamp: Optional[str]) -> str:
     """
     if not timestamp:
         return "nowindow"
-    from common.src.common.db.validation import parse_timestamp
+    from common.db.validation import parse_timestamp
 
     moment = parse_timestamp(timestamp)
     minutes = (moment.hour * 60 + moment.minute) // max(config.ALERT_WINDOW_MINUTES, 1)
