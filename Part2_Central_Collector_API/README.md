@@ -48,7 +48,7 @@ python main.py init
 ### 2. Set up Part 2
 
 ```bash
-cd ../Part2_Central_Collector_API
+cd Part2_Central_Collector_API
 python3 -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
