@@ -3,11 +3,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-# Import Part 4's central Database API
-try:
-    from db.database import Database
-except ImportError:
-    Database = None
+from common.db.database import Database
 
 # Global cache dictionary to prevent API rate-limiting
 IP_CACHE = {}
