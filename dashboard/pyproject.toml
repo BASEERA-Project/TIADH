@@ -1,0 +1,14 @@
+[project]
+name = "dashboard"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "common",
+    "plotly>=6.9.0",
+    "streamlit>=1.60.0",
+]
+
+[tool.uv.sources]
+common = { path = "../common", editable = true }
