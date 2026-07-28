@@ -1,109 +1,162 @@
-import json
-import sqlite3
-from datetime import datetime, timezone
-from pathlib import Path
-from .models import Event
+"""
+app/database.py — Part 2 storage adapter.
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS nodes (
-    node_id TEXT PRIMARY KEY,
-    hostname TEXT,
-    location TEXT,
-    ip_address TEXT,
-    status TEXT NOT NULL DEFAULT 'offline',
-    last_seen TEXT
-);
-CREATE TABLE IF NOT EXISTS sessions (
-    session_id TEXT PRIMARY KEY,
-    node_id TEXT NOT NULL,
-    attacker_ip TEXT NOT NULL,
-    protocol TEXT NOT NULL,
-    username TEXT,
-    password TEXT,
-    start_time TEXT NOT NULL,
-    end_time TEXT,
-    status TEXT NOT NULL DEFAULT 'active',
-    FOREIGN KEY(node_id) REFERENCES nodes(node_id)
-);
-CREATE TABLE IF NOT EXISTS events (
-    event_id TEXT PRIMARY KEY,
-    node_id TEXT NOT NULL,
-    session_id TEXT,
-    event_type TEXT NOT NULL,
-    timestamp TEXT NOT NULL,
-    attacker_ip TEXT,
-    protocol TEXT,
-    details TEXT NOT NULL,
-    received_at TEXT NOT NULL,
-    FOREIGN KEY(node_id) REFERENCES nodes(node_id)
-);
-CREATE INDEX IF NOT EXISTS idx_events_node_timestamp ON events(node_id, timestamp);
-CREATE INDEX IF NOT EXISTS idx_events_attacker_timestamp ON events(attacker_ip, timestamp);
+Part 4 owns the SQLite database. This module is a thin shim that imports
+Part 4's Database class and delegates every write to it. Part 2 must never
+open its own connection to the shared database file; all writes go through
+Part 4's write path so that masking, validation, and idempotency are applied
+consistently regardless of which part is writing.
+
+Part 4's documented contract (db/database.py docstring) lists the exact
+methods Part 2 is expected to call:
+    apply_event()            — persist one event (used by apply_events)
+    apply_events()           — batch ingest, returns accepted/duplicates/rejected
+    upsert_node()            — create or update a node row
+    mark_stale_nodes_offline() — flip nodes offline after missed heartbeats
+    close_stale_sessions()   — force-close abandoned sessions
+
+How Part 4 is located
+---------------------
+Set PART4_PATH to the absolute path of the `part4_storage_alerting` directory.
+In the shared deployment this is a sibling folder:
+
+    PART4_PATH=/opt/tiadh/part4_storage_alerting
+
+If PART4_PATH is not set the code falls back to looking two directories up from
+this file (works when the whole repo is checked out into one place).
 """
 
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+from __future__ import annotations
 
-def connect(database_path: str) -> sqlite3.Connection:
-    Path(database_path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(database_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    return conn
+import logging
+import os
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-def initialise(database_path: str) -> None:
-    with connect(database_path) as conn:
-        conn.executescript(SCHEMA)
+log = logging.getLogger(__name__)
 
-def event_exists(conn: sqlite3.Connection, event_id: str) -> bool:
-    return conn.execute("SELECT 1 FROM events WHERE event_id = ?", (event_id,)).fetchone() is not None
 
-def upsert_node(conn: sqlite3.Connection, node_id: str, received_at: str) -> None:
-    conn.execute("""
-        INSERT INTO nodes (node_id, status, last_seen) VALUES (?, 'online', ?)
-        ON CONFLICT(node_id) DO UPDATE SET status='online', last_seen=excluded.last_seen
-    """, (node_id, received_at))
+def _locate_part4() -> Path:
+    """
+    Return the path to the `part4_storage_alerting` directory.
 
-def upsert_session(conn: sqlite3.Connection, event: Event) -> None:
-    if event.event_type == "heartbeat" or event.session_id is None:
-        return
-    details = event.details
-    conn.execute("""
-        INSERT INTO sessions (session_id, node_id, attacker_ip, protocol, username, password, start_time, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
-        ON CONFLICT(session_id) DO UPDATE SET
-          username=COALESCE(excluded.username, sessions.username),
-          password=COALESCE(excluded.password, sessions.password)
-    """, (event.session_id, event.node_id, event.attacker_ip, event.protocol,
-          details.get("username"), details.get("password"), event.timestamp.isoformat()))
-    if event.event_type == "session_end":
-        conn.execute("UPDATE sessions SET end_time=?, status=? WHERE session_id=?", (
-            event.timestamp.isoformat(), details["status"], event.session_id))
+    Resolution order:
+      1. PART4_PATH environment variable
+      2. ../../part4_storage_alerting relative to this file
+         (i.e. assumes the full repo is checked out together)
+    """
+    from_env = os.getenv("PART4_PATH", "").strip()
+    if from_env:
+        p = Path(from_env)
+        if p.is_dir():
+            return p
+        log.warning("PART4_PATH=%s does not exist — falling back to auto-detect", from_env)
 
-def store_event(conn: sqlite3.Connection, event: Event, received_at: str) -> None:
-    conn.execute("""
-        INSERT INTO events (event_id, node_id, session_id, event_type, timestamp, attacker_ip, protocol, details, received_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (str(event.event_id), event.node_id, event.session_id, event.event_type,
-          event.timestamp.isoformat(), event.attacker_ip, event.protocol,
-          json.dumps(event.details, separators=(",", ":")), received_at))
-    upsert_session(conn, event)
+    # Part2_Central_Collector_API/app/database.py  →  go up 3 levels
+    repo_root = Path(__file__).resolve().parents[2]
+    candidate = repo_root / "part4_storage_alerting"
+    if candidate.is_dir():
+        return candidate
 
-def ingest(database_path: str, events: list[Event]) -> tuple[int, int]:
-    accepted = duplicates = 0
-    with connect(database_path) as conn:
-        for event in events:
-            received_at = utc_now()
-            upsert_node(conn, event.node_id, received_at)
-            if event_exists(conn, str(event.event_id)):
-                duplicates += 1
-                continue
-            store_event(conn, event, received_at)
-            accepted += 1
-    return accepted, duplicates
+    raise RuntimeError(
+        "Cannot locate part4_storage_alerting. "
+        "Set the PART4_PATH environment variable to its absolute path."
+    )
 
-def get_node(database_path: str, node_id: str):
-    with connect(database_path) as conn:
-        row = conn.execute("SELECT * FROM nodes WHERE node_id=?", (node_id,)).fetchone()
-        return dict(row) if row else None
+
+def _import_part4_database():
+    """
+    Dynamically import Part 4's db.database module.
+
+    We add part4_storage_alerting to sys.path at runtime because the two parts
+    live in separate directories and are not installed as packages. The import is
+    cached in sys.modules so subsequent calls are free.
+    """
+    part4_path = str(_locate_part4())
+    if part4_path not in sys.path:
+        sys.path.insert(0, part4_path)
+    # Importing `config` here ensures Part 4's own config module is resolved
+    # before `db.database` tries to use it.
+    import importlib
+    importlib.import_module("config")          # part4_storage_alerting/config.py
+    db_mod = importlib.import_module("db.database")
+    return db_mod
+
+
+# --------------------------------------------------------------------------
+# Public helpers — called by main.py
+# --------------------------------------------------------------------------
+
+def get_database():
+    """
+    Return Part 4's Database instance (write handle).
+
+    The instance is created once per process. Part 4's Database class manages
+    per-thread connections internally, so this is safe to call from any thread.
+    """
+    mod = _import_part4_database()
+    return mod.get_db(read_only=False)
+
+
+def initialise() -> None:
+    """
+    Ensure the schema exists.
+
+    Delegates to Part 4's init_db(), which runs initialize_schema() and is safe
+    to call on every startup even when the database already has data.
+    """
+    mod = _import_part4_database()
+    db = mod.init_db()
+    log.info("Part 4 database initialised at %s", db.path)
+
+
+def ingest(events: List[Any]) -> Tuple[int, int, int]:
+    """
+    Persist a batch of already-validated Event objects.
+
+    Converts each Pydantic Event to the plain dict format Part 4 expects (the
+    shared Baseline v1.3 JSON envelope), then calls Part 4's apply_events().
+
+    Returns (accepted, duplicates, rejected).
+    """
+    db = get_database()
+
+    raw_events: List[Dict[str, Any]] = []
+    for event in events:
+        raw_events.append({
+            "event_id":   str(event.event_id),
+            "node_id":    event.node_id,
+            "event_type": event.event_type,
+            "timestamp":  event.timestamp.isoformat().replace("+00:00", "Z"),
+            "session_id": event.session_id,
+            "attacker_ip": event.attacker_ip,
+            "protocol":   event.protocol,
+            "details":    dict(event.details),
+        })
+
+    result = db.apply_events(raw_events)
+    return result["accepted"], result["duplicates"], result["rejected"]
+
+
+def get_node(node_id: str) -> Optional[Dict[str, Any]]:
+    """Return a node row as a plain dict, or None if the node is unknown."""
+    db = get_database()
+    return db.query_one("SELECT * FROM nodes WHERE node_id = ?", (node_id,))
+
+
+def run_maintenance() -> None:
+    """
+    Housekeeping pass: mark stale nodes offline and force-close abandoned sessions.
+
+    Part 4's contract (db/database.py) lists both of these as Part 2's
+    responsibility because Part 2 is the only always-running process.
+    Schedule this in the collector's background loop (see main.py lifespan).
+    """
+    db = get_database()
+    nodes_flipped = db.mark_stale_nodes_offline()
+    sessions_closed = db.close_stale_sessions()
+    if nodes_flipped:
+        log.info("maintenance: marked %d node(s) offline", nodes_flipped)
+    if sessions_closed:
+        log.info("maintenance: force-closed %d stale session(s)", sessions_closed)
