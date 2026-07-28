@@ -1,0 +1,170 @@
+{# =========================================================================
+   _macros.html — the shared vocabulary of the interface.
+
+   Import with context so the macros can use url_with():
+     {% import "_macros.html" as ui with context %}
+
+   Every value that is an identifier — IP, timestamp, session id, hash, port,
+   command — comes out of here in monospace. Labels and prose stay proportional.
+   ========================================================================= #}
+
+{# A timestamp, dimmed date and brighter time, always UTC and always the width
+   the storage layer normalised it to. #}
+{% macro ts(value) %}
+  {%- if value -%}
+    <span class="ts" data-tip="{{ value | relative }}"><span class="d">{{ value | date_part }}</span><span class="dim">T</span><span class="t">{{ value | time_part }}</span><span class="z">Z</span></span>
+  {%- else -%}<span class="dim">{{ DASH }}</span>{%- endif -%}
+{% endmacro %}
+
+{# Relative age with the exact timestamp one hover away. #}
+{% macro age(value) %}
+  {%- if value -%}
+    <span class="nowrap dim" data-tip="{{ value | timestamp }}">{{ value | relative }}</span>
+  {%- else -%}<span class="dim">{{ DASH }}</span>{%- endif -%}
+{% endmacro %}
+
+{% macro ip(value) %}
+  {%- if value -%}
+    <a class="ip" href="{{ url_for('attackers.profile', ip=value) }}">{{ value }}</a>
+  {%- else -%}<span class="dim">{{ DASH }}</span>{%- endif -%}
+{% endmacro %}
+
+{% macro copy(value, label='copy') %}
+  <button class="copy" type="button" data-copy="{{ value }}" data-tip="{{ label }}"
+          aria-label="Copy {{ value }}">
+    <svg width="12" height="12"><use href="#i-copy"/></svg>
+  </button>
+{% endmacro %}
+
+{# Severity always ships as colour *and* word — hue never carries it alone. #}
+{% macro sev(value) %}
+  <span class="chip {{ value | severity_class }}"><span class="pip"></span>{{ value }}</span>
+{% endmacro %}
+
+{% macro state(value) %}
+  <span class="chip {{ value | state_class }}">{{ value or DASH }}</span>
+{% endmacro %}
+
+{% macro health(value) %}
+  <span class="chip health-{{ value }}"><span class="pip"></span>{{ value }}</span>
+{% endmacro %}
+
+{# A 0-100 score: number plus a meter whose fill band changes at the same
+   threshold the high_risk_ip rule fires on. #}
+{% macro score(value, tip='') %}
+  {% set band = value | score_band %}
+  <span class="score-cell" {% if tip %}data-tip="{{ tip }}"{% endif %}>
+    <span class="v{% if band == 'none' %} is-none{% endif %}">
+      {{- value if value is not none else DASH -}}
+    </span>
+    <span class="meter"><i class="band-{{ band }}" style="width: {{ (value or 0) }}%"></i></span>
+  </span>
+{% endmacro %}
+
+{% macro meter(value, maximum, band='low') %}
+  <span class="meter"><i class="band-{{ band }}"
+    style="width: {{ (100.0 * (value or 0) / (maximum or 1)) | round(1) }}%"></i></span>
+{% endmacro %}
+
+{# One row of a horizontal bar list. The value rides the tip, never inside. #}
+{% macro barrow(label, value, maximum, tone='', href='', tip='') %}
+  <div class="barlist-row"{% if tip %} data-tip="{{ tip }}"{% endif %}>
+    <div class="k mono">
+      {%- if href -%}<a href="{{ href }}">{{ label }}</a>{%- else -%}{{ label }}{%- endif -%}
+    </div>
+    <div class="barlist-track">
+      <div class="barlist-fill {{ tone }}"
+           style="width: {{ (100.0 * (value or 0) / (maximum or 1)) | round(1) }}%"></div>
+    </div>
+    <div class="v">{{ value | number }}</div>
+  </div>
+{% endmacro %}
+
+{% macro spark(values, maximum) %}
+  <span class="spark">
+    {%- for v in values -%}
+      <i class="{% if loop.last %}is-last{% endif %}"
+         style="height: {{ [2, (100.0 * (v or 0) / (maximum or 1)) | round(0) | int] | max }}%"></i>
+    {%- endfor -%}
+  </span>
+{% endmacro %}
+
+{# A sortable column header that preserves every filter already applied. #}
+{% macro sort_th(label, key, current, css='') %}
+  <th class="{{ css }}{% if current == key %} sorted{% endif %}">
+    <a href="{{ url_with(sort=key, page=none) }}">{{ label }}</a>
+  </th>
+{% endmacro %}
+
+{% macro pager(page, noun='rows') %}
+  <div class="pager">
+    <span>
+      {% if page.total %}
+        {{ page.start_index | number }}–{{ page.end_index | number }}
+        of <strong class="strong">{{ page.total | number }}</strong> {{ noun }}
+      {% else %}no {{ noun }}{% endif %}
+    </span>
+    {% if page.pages > 1 %}
+      <span class="pages">
+        {% if page.has_prev %}
+          <a href="{{ url_with(page=1) }}">first</a>
+          <a href="{{ url_with(page=page.page - 1) }}">prev</a>
+        {% endif %}
+        {% for n in page.window() %}
+          {% if n == page.page %}<span class="here">{{ n }}</span>
+          {% else %}<a href="{{ url_with(page=n) }}">{{ n }}</a>{% endif %}
+        {% endfor %}
+        {% if page.has_next %}
+          <a href="{{ url_with(page=page.page + 1) }}">next</a>
+          <a href="{{ url_with(page=page.pages) }}">last</a>
+        {% endif %}
+      </span>
+    {% endif %}
+  </div>
+{% endmacro %}
+
+{% macro empty(title, hint='') %}
+  <div class="empty">
+    <strong>{{ title }}</strong>
+    {% if hint %}{{ hint }}{% endif %}
+  </div>
+{% endmacro %}
+
+{% macro note(text, kind='') %}
+  <div class="note {{ kind }}">
+    <svg width="14" height="14"><use href="#i-info"/></svg>
+    <div>{{ text }}</div>
+  </div>
+{% endmacro %}
+
+{% macro tile(label, value, href='', sub='', tone='', stat='') %}
+  {% if href %}<a class="tile" href="{{ href }}">{% else %}<div class="tile">{% endif %}
+    <div class="tile-label">{{ label }}</div>
+    <div class="tile-value {{ tone }}"{% if stat %} data-stat="{{ stat }}"{% endif %}>{{ value }}</div>
+    {% if sub %}<div class="tile-sub">{{ sub }}</div>{% endif %}
+  {% if href %}</a>{% else %}</div>{% endif %}
+{% endmacro %}
+
+{# The activity chart: one column per hour, 2px of surface between neighbours,
+   a rounded cap on the data end and a square foot on the baseline. #}
+{% macro colchart(series, peak, key='total') %}
+  <div class="colchart">
+    <div class="colchart-max">{{ peak | number }}</div>
+    <div class="colchart-plot">
+      <div class="colchart-grid">
+        <span style="top: 0"></span><span style="top: 50%"></span><span style="bottom: 0"></span>
+      </div>
+      {% for point in series %}
+        {% set value = point[key] or 0 %}
+        <div class="colchart-col{% if not value %} is-empty{% endif %}"
+             data-tip="{{ point.label }}&#10;{{ value }} events · {{ point.ips }} IPs">
+          <i style="height: {{ [2, (100.0 * value / (peak or 1)) | round(1)] | max }}%"></i>
+        </div>
+      {% endfor %}
+    </div>
+    <div class="colchart-axis">
+      <span>{{ series[0].label if series else '' }}</span>
+      <span>{{ series[-1].label if series else '' }}</span>
+    </div>
+  </div>
+{% endmacro %}

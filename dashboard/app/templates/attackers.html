@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+
+{% block crumb %}<div class="crumb">Reputation joined to event aggregates</div>{% endblock %}
+
+{% block content %}
+
+<form class="filters" method="get" data-autosubmit>
+  <label class="field grow">
+    <span>Search</span>
+    <input type="search" name="q" value="{{ filters.q or '' }}" data-search
+           placeholder="IP, country or city  —  press /" autocomplete="off">
+  </label>
+
+  <label class="field">
+    <span>Country</span>
+    <select name="country">
+      <option value="">any</option>
+      {% for country in countries %}
+        <option value="{{ country }}" {% if filters.country == country %}selected{% endif %}>{{ country }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="field">
+    <span>Seen on node</span>
+    <select name="node">
+      <option value="">any</option>
+      {% for node in nodes %}
+        <option value="{{ node }}" {% if filters.node == node %}selected{% endif %}>{{ node }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="field">
+    <span>Min score</span>
+    <select name="min_score">
+      <option value="">any</option>
+      {% for value in [25, 50, thresholds.HIGH_RISK_SCORE_THRESHOLD, 90] %}
+        <option value="{{ value }}" {% if filters.min_score == value | string %}selected{% endif %}>
+          ≥ {{ value }}{% if value == thresholds.HIGH_RISK_SCORE_THRESHOLD %} (alert threshold){% endif %}
+        </option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="field">
+    <span>Active in</span>
+    <select name="window">
+      {% for value, label in windows %}
+        <option value="{{ value }}" {% if (filters.window or 'all') == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="check">
+    <input type="checkbox" name="alerts_only" value="1" {% if filters.alerts_only %}checked{% endif %}>
+    has alerts
+  </label>
+  <label class="check">
+    <input type="checkbox" name="breached_only" value="1" {% if filters.breached_only %}checked{% endif %}>
+    logged in
+  </label>
+
+  <div class="spacer"></div>
+  <button class="btn btn-primary" type="submit">Apply</button>
+  {% if filter_count %}
+    <a class="btn" href="{{ url_for('attackers.index') }}">Clear {{ filter_count }}</a>
+  {% endif %}
+</form>
+
+<div class="panel">
+  <div class="panel-head">
+    <h2>Attackers</h2>
+    <span class="sub">{{ page.total | number }} matching IP{{ '' if page.total == 1 else 's' }}</span>
+  </div>
+
+  {% if page.rows %}
+    <div class="table-wrap">
+      <table class="grid">
+        <thead>
+          <tr>
+            {{ ui.sort_th('Attacker IP', 'ip') }}
+            {{ ui.sort_th('Score', 'score', filters.sort, 'num') }}
+            <th>Location</th>
+            {{ ui.sort_th('Nodes', 'nodes', filters.sort, 'num') }}
+            {{ ui.sort_th('Sessions', 'sessions', filters.sort, 'num') }}
+            {{ ui.sort_th('Events', 'events', filters.sort, 'num') }}
+            {{ ui.sort_th('Failed logins', 'logins', filters.sort, 'num') }}
+            <th class="num">Logged in</th>
+            {{ ui.sort_th('Commands', 'commands', filters.sort, 'num') }}
+            {{ ui.sort_th('Downloads', 'downloads', filters.sort, 'num') }}
+            {{ ui.sort_th('Alerts', 'alerts', filters.sort, 'num') }}
+            {{ ui.sort_th('First seen', 'first_seen', filters.sort) }}
+            {{ ui.sort_th('Last seen', 'last_seen', filters.sort) }}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in page.rows %}
+            <tr class="{% if row.high_alerts %}is-high{% elif row.alert_count %}is-medium{% endif %}">
+              <td class="nowrap">
+                {{ ui.ip(row.attacker_ip) }}{{ ui.copy(row.attacker_ip) }}
+              </td>
+              <td class="num">
+                {{ ui.score(row.risk_score,
+                            'abuse ' ~ (row.abuse_score if row.abuse_score is not none else '—') ~
+                            ' · profile ' ~ (row.profile_score if row.profile_score is not none else '—')) }}
+              </td>
+              <td class="truncate" style="max-width: 170px">
+                {% if row.country %}
+                  {{ row.country }}{% if row.city %}<span class="dim"> · {{ row.city }}</span>{% endif %}
+                {% else %}
+                  <span class="dim">not enriched</span>
+                {% endif %}
+              </td>
+              <td class="num {% if row.node_count == 1 %}zero{% endif %}">{{ row.node_count }}</td>
+              <td class="num">{{ row.session_count | number }}</td>
+              <td class="num">{{ row.event_count | number }}</td>
+              <td class="num {% if not row.login_attempts %}zero{% endif %}">{{ row.login_attempts | number }}</td>
+              <td class="num {% if not row.login_successes %}zero{% endif %}">
+                {% if row.login_successes %}
+                  <span class="chip sev-high">{{ row.login_successes }}</span>
+                {% else %}0{% endif %}
+              </td>
+              <td class="num {% if not row.command_count %}zero{% endif %}">{{ row.command_count | number }}</td>
+              <td class="num {% if not row.download_count %}zero{% endif %}">{{ row.download_count | number }}</td>
+              <td class="num {% if not row.alert_count %}zero{% endif %}">
+                {% if row.alert_count %}
+                  <a href="{{ url_for('alerts.index', ip=row.attacker_ip) }}">{{ row.alert_count }}</a>
+                {% else %}0{% endif %}
+              </td>
+              <td>{{ ui.ts(row.first_seen) }}</td>
+              <td>{{ ui.age(row.last_seen) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.pager(page, 'attackers') }}
+  {% else %}
+    {{ ui.empty('No attackers match these filters',
+                'Widen the time window or clear the filters to see everything the sensors have recorded.') }}
+  {% endif %}
+</div>
+
+{% endblock %}

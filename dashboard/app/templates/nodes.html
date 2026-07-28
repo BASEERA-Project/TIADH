@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+
+{% block crumb %}<div class="crumb">Sensor fleet health</div>{% endblock %}
+
+{% block content %}
+
+<div style="margin-bottom: 14px">
+  {{ ui.note('Health is measured in missed heartbeats against the ' ~ heartbeat_interval ~ 's contract
+              interval: amber from ' ~ warn_missed ~ ' missed, red from ' ~ crit_missed ~ '. The collector
+              independently flips a node to offline after ' ~ offline_after ~ 's, so a node can read amber here
+              while its stored status is still online — that gap is the early warning.') }}
+</div>
+
+{% if nodes %}
+  <div class="grid-3">
+    {% for node in nodes %}
+      <div class="panel">
+        <div class="panel-head">
+          <h3 class="mono">{{ node.node_id }}</h3>
+          {{ ui.health(node.health) }}
+          <div class="actions">{{ ui.state(node.status) }}</div>
+        </div>
+
+        <div class="panel-body">
+          <dl class="kv">
+            <dt>Last contact</dt>
+            <dd>
+              {% if node.last_contact %}
+                <span data-tip="{{ node.last_contact }}">{{ node.last_contact | relative }}</span>
+              {% else %}<span class="dim">never</span>{% endif %}
+            </dd>
+
+            <dt>Missed heartbeats</dt>
+            <dd class="mono">
+              {% if node.missed_heartbeats is not none %}
+                <span {% if node.health == 'critical' %}style="color: var(--crit)"
+                      {% elif node.health == 'warning' %}style="color: var(--warn)"{% endif %}>
+                  {{ node.missed_heartbeats }}
+                </span>
+              {% else %}{{ DASH }}{% endif %}
+            </dd>
+
+            <dt>Last heartbeat</dt>
+            <dd>{{ ui.age(node.last_heartbeat) }}</dd>
+            <dt>Last event</dt>
+            <dd>{{ ui.age(node.last_event) }}</dd>
+
+            <dt>Events shipped, 24h</dt>
+            <dd class="mono">{{ node.events_24h | number }}</dd>
+            <dt>Events shipped, total</dt>
+            <dd class="mono">{{ node.events_total | number }}</dd>
+
+            <dt>Sessions</dt><dd class="mono">{{ node.sessions_total | number }}</dd>
+            <dt>Distinct attackers</dt><dd class="mono">{{ node.attackers_total | number }}</dd>
+            <dt>Alerts, 24h</dt><dd class="mono">{{ node.alerts_24h | number }}</dd>
+
+            <dt data-tip="received_at − timestamp, averaged over every event from this node">
+              Ingest lag, mean
+            </dt>
+            <dd class="mono">
+              {% if node.avg_lag_seconds is not none %}
+                {{ node.avg_lag_seconds | round(1) }}s
+              {% else %}{{ DASH }}{% endif %}
+            </dd>
+            <dt data-tip="the worst single delay between an event happening and the collector accepting it">
+              Ingest lag, worst
+            </dt>
+            <dd class="mono">
+              {% if node.max_lag_seconds is not none %}
+                <span {% if node.max_lag_seconds > 300 %}style="color: var(--warn)"{% endif %}>
+                  {{ node.max_lag_seconds | round(0) | int }}s
+                </span>
+              {% else %}{{ DASH }}{% endif %}
+            </dd>
+
+            <dt>Hostname</dt><dd class="mono">{{ node.hostname or DASH }}</dd>
+            <dt>Location</dt><dd class="mono">{{ node.location or DASH }}</dd>
+            <dt>Address</dt><dd class="mono">{{ node.ip_address or DASH }}</dd>
+          </dl>
+        </div>
+
+        <div class="panel-body" style="border-top: 1px solid var(--border)">
+          <div class="tiny dim" style="margin-bottom: 7px">Events per hour, last 24h</div>
+          {% if node.activity and peak %}
+            <div class="colchart">
+              <div class="colchart-plot" style="height: 56px">
+                <div class="colchart-grid"><span style="bottom: 0"></span></div>
+                {% for point in node.activity %}
+                  <div class="colchart-col" data-tip="{{ point.bucket }}:00Z&#10;{{ point.n }} events">
+                    <i style="height: {{ [3, (100.0 * point.n / peak) | round(1)] | max }}%"></i>
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+          {% else %}
+            <div class="tiny dim">No events in the last 24 hours.</div>
+          {% endif %}
+        </div>
+
+        <div class="panel-foot">
+          <a href="{{ url_for('sessions.index', node=node.node_id) }}">Sessions from this node →</a>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <div class="panel" style="margin-top: 14px">
+    <div class="panel-head">
+      <h3>On spool depth</h3>
+    </div>
+    <div class="panel-body">
+      <p style="margin: 0 0 8px">
+        A node's spool — its <span class="mono">pending_events.jsonl</span> backlog — lives on the node and is
+        not part of the Baseline v1.3 event contract, so the central database cannot report it directly and this
+        dashboard does not invent a number for it.
+      </p>
+      <p style="margin: 0">
+        Ingest lag above is what a draining spool looks like from the collector's side: it is measured, not
+        estimated, as <span class="mono">received_at − timestamp</span> for every event the node shipped. A node
+        that went offline and came back shows a large worst-case lag and a normal mean; a node that is
+        persistently behind shows both climbing.
+      </p>
+    </div>
+  </div>
+{% else %}
+  <div class="panel">
+    {{ ui.empty('No sensors registered',
+                'A node appears here as soon as the collector accepts its first event or heartbeat.') }}
+  </div>
+{% endif %}
+
+{% endblock %}

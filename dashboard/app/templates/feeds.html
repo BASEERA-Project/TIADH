@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+
+{% block crumb %}<div class="crumb">Outbound threat intelligence</div>{% endblock %}
+
+{% block content %}
+
+{% if not feed %}
+  <div class="panel">
+    {{ ui.empty('Feed export unavailable',
+                'core/export/exporter.py could not be imported, so there is nothing to preview or download.') }}
+  </div>
+{% else %}
+
+<form class="filters" method="get" data-autosubmit>
+  <label class="field">
+    <span>Minimum severity</span>
+    <select name="min_severity">
+      {% for value in ['low', 'medium', 'high'] %}
+        <option value="{{ value }}" {% if params.min_severity == value %}selected{% endif %}>
+          {{ value }}{% if value == thresholds.FEED_MIN_SEVERITY %} (policy default){% endif %}
+        </option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="field">
+    <span>Window</span>
+    <select name="window">
+      {% for value, label in windows %}
+        <option value="{{ value }}" {% if params.window == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="field">
+    <span>Country</span>
+    <select name="country">
+      <option value="">any</option>
+      {% for country in countries %}
+        <option value="{{ country }}" {% if params.country == country %}selected{% endif %}>{{ country }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="field">
+    <span>Alert type</span>
+    <select name="type">
+      <option value="">any</option>
+      {% for value in alert_types %}
+        <option value="{{ value }}" {% if params.type == value %}selected{% endif %}>{{ value }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="field">
+    <span>Min confidence</span>
+    <select name="min_confidence">
+      {% for value in [0, 50, 60, 70, 80, 90] %}
+        <option value="{{ value }}" {% if params.min_confidence == value %}selected{% endif %}>
+          {% if value %}≥ {{ value }}{% else %}any{% endif %}
+        </option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <div class="spacer"></div>
+  <button class="btn btn-primary" type="submit">Apply</button>
+  <a class="btn" href="{{ url_for('feeds.index') }}">Reset</a>
+</form>
+
+<div class="tiles">
+  {{ ui.tile('Indicators', feed.feed.counts.indicators | number, '', 'attacker IPs published') }}
+  {{ ui.tile('Alerts', feed.feed.counts.alerts | number, '', 'included as evidence') }}
+  {{ ui.tile('Severity floor', params.min_severity, '',
+             'statuses: ' ~ (feed.feed.statuses | join(', '))) }}
+  {{ ui.tile('Schema', 'v' ~ feed.feed.schema_version, '', feed.feed.producer) }}
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h2>Download</h2>
+    <span class="sub">stable URLs — the query string is the feed definition</span>
+  </div>
+  <div class="panel-body">
+    {% for name, spec in files.items() %}
+      <div class="url-row">
+        <span class="name">{{ spec.label }}</span>
+        <span class="u" data-tip="{{ urls[name] }}">{{ urls[name] }}</span>
+        {{ ui.copy(urls[name], 'copy URL') }}
+        <a class="btn btn-sm btn-primary" href="{{ urls[name] }}">
+          <svg width="12" height="12"><use href="#i-download"/></svg> {{ name }}
+        </a>
+      </div>
+      <div class="tiny dim" style="margin: -4px 0 4px">{{ spec.blurb }}</div>
+    {% endfor %}
+  </div>
+  <div class="panel-foot">
+    Every file is written by <span class="mono">core/export/exporter.py</span> — the same code
+    <span class="mono">python main.py export</span> runs — against exactly the payload previewed below, so
+    the preview and the download can never disagree.
+  </div>
+</div>
+
+<div class="grid-2" style="margin-top: 14px">
+  <div class="panel">
+    <div class="panel-head">
+      <h3>Indicators</h3>
+      <span class="sub">first {{ preview_indicators | length }} of {{ feed.feed.counts.indicators | number }}</span>
+    </div>
+    {% if preview_indicators %}
+      <div class="table-wrap">
+        <table class="grid">
+          <thead>
+            <tr>
+              <th>IP</th><th>Severity</th><th class="num">Confidence</th>
+              <th>Country</th><th class="num">Alerts</th><th>Types</th><th>Last seen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in preview_indicators %}
+              <tr class="{% if row.severity == 'high' %}is-high{% elif row.severity == 'medium' %}is-medium{% endif %}">
+                <td>{{ ui.ip(row.attacker_ip) }}</td>
+                <td>{{ ui.sev(row.severity) }}</td>
+                <td class="num">{{ row.confidence }}</td>
+                <td class="dim">{{ row.geo.country or DASH }}</td>
+                <td class="num">{{ row.alert_count }}</td>
+                <td class="mono tiny truncate" style="max-width: 200px">
+                  {{ row.alert_types | join(', ') }}
+                </td>
+                <td>{{ ui.ts(row.last_seen) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {{ ui.empty('Nothing to publish',
+                  'No IP currently has an alert at or above this severity in this window.') }}
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h3>Alerts</h3>
+      <span class="sub">first {{ preview_alerts | length }} of {{ feed.feed.counts.alerts | number }}</span>
+    </div>
+    {% if preview_alerts %}
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>Severity</th><th>Rule</th><th>Source</th><th>Status</th><th>Raised</th></tr></thead>
+          <tbody>
+            {% for row in preview_alerts %}
+              <tr class="{% if row.severity == 'high' %}is-high{% elif row.severity == 'medium' %}is-medium{% endif %}">
+                <td>{{ ui.sev(row.severity) }}</td>
+                <td class="mono">{{ row.alert_type }}</td>
+                <td>{{ ui.ip(row.attacker_ip) }}</td>
+                <td>{{ ui.state(row.status) }}</td>
+                <td>{{ ui.ts(row.timestamp) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {{ ui.empty('No alerts in this feed') }}
+    {% endif %}
+  </div>
+</div>
+
+<div class="panel" style="margin-top: 14px">
+  <div class="panel-head">
+    <h3>Payload preview</h3>
+    <span class="sub">feed metadata and the first two records of each collection</span>
+  </div>
+  <div class="panel-body">
+    <pre class="code">{{ preview_json }}</pre>
+  </div>
+  <div class="panel-foot">{{ feed.feed.notice }}</div>
+</div>
+
+{% endif %}
+
+{% endblock %}

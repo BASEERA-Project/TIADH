@@ -1,0 +1,310 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+
+{% set heading = ip %}
+
+{% block crumb %}
+  <div class="crumb"><a href="{{ url_for('attackers.index') }}">Attackers</a> · profile</div>
+{% endblock %}
+
+{% block content %}
+
+<div class="panel">
+  <div class="panel-head">
+    <h2 class="mono" style="font-size: 15px">{{ ip }}</h2>
+    {{ ui.copy(ip) }}
+    {% set risk = summary.risk_score if summary.risk_score is not none
+                  else [summary.abuse_score or 0, summary.profile_score or 0] | max %}
+    <span class="sub">
+      {% if reputation and reputation.country %}
+        {{ reputation.country }}{% if reputation.city %} · {{ reputation.city }}{% endif %}
+      {% else %}no geolocation on record{% endif %}
+    </span>
+    {% if risk >= thresholds.HIGH_RISK_SCORE_THRESHOLD %}
+      <span class="chip sev-high"><span class="pip"></span>high risk</span>
+    {% endif %}
+    {% if summary.login_successes %}
+      <span class="chip sev-high"><span class="pip"></span>authenticated</span>
+    {% endif %}
+    <div class="actions">
+      <a class="btn btn-sm" href="{{ url_for('alerts.index', ip=ip) }}">Alerts</a>
+      <a class="btn btn-sm" href="{{ url_for('sessions.index', ip=ip) }}">Sessions</a>
+      <a class="btn btn-sm" href="{{ url_for('attackers.export', ip=ip, fmt='csv') }}">
+        <svg width="12" height="12"><use href="#i-download"/></svg> CSV
+      </a>
+      <a class="btn btn-primary btn-sm" href="{{ url_for('attackers.export', ip=ip, fmt='json') }}">
+        <svg width="12" height="12"><use href="#i-download"/></svg> Export this IP
+      </a>
+    </div>
+  </div>
+
+  <div class="panel-body">
+    <div class="facts">
+      <div><div class="k">Events</div><div class="v">{{ profile_inputs.event_count | number }}</div></div>
+      <div><div class="k">Sessions</div><div class="v">{{ profile_inputs.session_count | number }}</div></div>
+      <div><div class="k">Sensors hit</div><div class="v">{{ profile_inputs.node_count | number }}</div></div>
+      <div><div class="k">Login attempts</div><div class="v">{{ profile_inputs.login_attempts | number }}</div></div>
+      <div>
+        <div class="k">Successes</div>
+        <div class="v" {% if profile_inputs.login_successes %}style="color: var(--crit)"{% endif %}>
+          {{ profile_inputs.login_successes | number }}
+        </div>
+      </div>
+      <div><div class="k">Commands</div><div class="v">{{ profile_inputs.command_count | number }}</div></div>
+      <div><div class="k">Downloads</div><div class="v">{{ profile_inputs.download_count | number }}</div></div>
+      <div><div class="k">First seen</div><div class="v sm">{{ profile_inputs.first_seen | date_part }}</div></div>
+      <div><div class="k">Last seen</div><div class="v sm">{{ profile_inputs.last_seen | relative }}</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="grid-2" style="margin-top: 14px">
+
+  <div class="panel">
+    <div class="panel-head">
+      <h3>Reputation</h3>
+      <span class="sub">written by the enrichment worker</span>
+    </div>
+    <div class="panel-body">
+      {% if reputation %}
+        <dl class="kv">
+          <dt>AbuseIPDB score</dt>
+          <dd>{{ ui.score(reputation.abuse_score) }}</dd>
+          <dt>Local profile score</dt>
+          <dd>{{ ui.score(reputation.profile_score) }}</dd>
+          <dt>Country</dt><dd class="mono">{{ reputation.country or DASH }}</dd>
+          <dt>City</dt><dd class="mono">{{ reputation.city or DASH }}</dd>
+          <dt>Coordinates</dt>
+          <dd class="mono">
+            {% if reputation.latitude is not none and reputation.longitude is not none %}
+              {{ reputation.latitude | round(3) }}, {{ reputation.longitude | round(3) }}
+            {% else %}{{ DASH }}{% endif %}
+          </dd>
+          <dt>Sources</dt>
+          <dd>
+            {% for source in (reputation.source or '').split(',') if source %}
+              <span class="tag">{{ source }}</span>
+            {% else %}<span class="dim">{{ DASH }}</span>{% endfor %}
+          </dd>
+          <dt>Last updated</dt><dd>{{ ui.age(reputation.last_updated) }}</dd>
+          <dt>Distinct usernames</dt><dd class="mono">{{ profile_inputs.distinct_usernames | number }}</dd>
+          <dt>Distinct commands</dt><dd class="mono">{{ profile_inputs.distinct_commands | number }}</dd>
+        </dl>
+        {% if reputation.abuse_score is not none
+              and reputation.abuse_score >= thresholds.HIGH_RISK_SCORE_THRESHOLD %}
+          <div style="margin-top: 12px">
+            {{ ui.note('Score is at or above the high_risk_ip threshold of '
+                       ~ thresholds.HIGH_RISK_SCORE_THRESHOLD ~ ', so this IP alerts on every evaluation pass
+                       until the score falls a decile.') }}
+          </div>
+        {% endif %}
+      {% else %}
+        {{ ui.empty('Not enriched yet',
+                    'The enrichment worker has not written a reputation row for this address.') }}
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h3>Activity</h3>
+      <span class="sub">events per day, last 14 days</span>
+    </div>
+    <div class="panel-body">
+      {% set peak = daily | map(attribute='n') | max %}
+      {% if peak %}
+        <div class="colchart">
+          <div class="colchart-max">{{ peak | number }}</div>
+          <div class="colchart-plot">
+            <div class="colchart-grid">
+              <span style="top: 0"></span><span style="top: 50%"></span><span style="bottom: 0"></span>
+            </div>
+            {% for point in daily %}
+              <div class="colchart-col{% if not point.n %} is-empty{% endif %}"
+                   data-tip="{{ point.day }}&#10;{{ point.n }} events">
+                <i style="height: {{ [2, (100.0 * point.n / peak) | round(1)] | max }}%"></i>
+              </div>
+            {% endfor %}
+          </div>
+          <div class="colchart-axis">
+            <span>{{ daily[0].day }}</span><span>{{ daily[-1].day }}</span>
+          </div>
+        </div>
+      {% else %}
+        {{ ui.empty('No activity in the last 14 days') }}
+      {% endif %}
+
+      {% if nodes %}
+        <h4 class="tiny dim" style="margin: 16px 0 8px; letter-spacing: .06em; text-transform: uppercase">
+          Sensors touched
+        </h4>
+        {% set node_peak = nodes | map(attribute='events') | max %}
+        <div class="barlist">
+          {% for node in nodes %}
+            {{ ui.barrow(node.node_id, node.events, node_peak, '',
+                         url_for('sessions.index', ip=ip, node=node.node_id),
+                         'first ' ~ node.first_seen ~ '&#10;last ' ~ node.last_seen) }}
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="grid-2" style="margin-top: 14px">
+
+  <div class="panel">
+    <div class="panel-head">
+      <h3>Commands run</h3>
+      <span class="sub">classified by the alert engine's own patterns</span>
+    </div>
+    {% if commands %}
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>Command</th><th>Assessment</th><th class="num">Times</th><th>Last</th></tr></thead>
+          <tbody>
+            {% for row in commands %}
+              <tr class="{% if row.risk and row.risk.severity == 'high' %}is-high{% endif %}">
+                <td class="mono truncate" style="max-width: 300px" data-tip="{{ row.command }}">{{ row.command }}</td>
+                <td>
+                  {% if row.risk %}
+                    {{ ui.sev(row.risk.severity) }} <span class="tiny dim">{{ row.risk.label }}</span>
+                  {% else %}<span class="tiny dim">no rule matches</span>{% endif %}
+                </td>
+                <td class="num">{{ row.times }}</td>
+                <td>{{ ui.age(row.last_seen) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {{ ui.empty('No commands', 'This IP never reached a shell.') }}
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h3>Usernames tried</h3>
+      <span class="sub">passwords stay in local storage</span>
+    </div>
+    <div class="panel-body">
+      {% if usernames %}
+        {% set peak = usernames | map(attribute='attempts') | max %}
+        <div class="barlist">
+          {% for row in usernames %}
+            {{ ui.barrow(row.username, row.attempts, peak,
+                         'is-high' if row.successes else '', '',
+                         (row.successes ~ ' successful login(s)') if row.successes else 'never accepted') }}
+          {% endfor %}
+        </div>
+        <div class="legend" style="margin-top: 12px">
+          <span><i style="background: var(--accent)"></i> attempted</span>
+          <span><i style="background: var(--crit)"></i> accepted at least once</span>
+        </div>
+      {% else %}
+        {{ ui.empty('No login attempts') }}
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="panel" style="margin-top: 14px">
+  <div class="panel-head">
+    <h3>Sessions</h3>
+    <span class="sub">{{ sessions | length }} most recent</span>
+    <div class="actions">
+      <a class="btn btn-sm" href="{{ url_for('sessions.index', ip=ip) }}">Open in Sessions</a>
+    </div>
+  </div>
+  {% if sessions %}
+    <div class="table-wrap">
+      <table class="grid">
+        <thead>
+          <tr>
+            <th>Session</th><th>Node</th><th>Protocol</th><th>Status</th>
+            <th class="num">Events</th><th class="num">Logins</th><th class="num">Commands</th>
+            <th>Started</th><th>Ended</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in sessions %}
+            <tr class="{% if row.login_successes %}is-high{% endif %}">
+              <td><a class="mono" href="{{ url_for('sessions.detail', session_id=row.session_id) }}">{{ row.session_id }}</a></td>
+              <td class="mono">{{ row.node_id }}</td>
+              <td class="mono">{{ row.protocol or DASH }}</td>
+              <td>{{ ui.state(row.status) }}</td>
+              <td class="num">{{ row.event_count }}</td>
+              <td class="num">{{ row.login_attempts }}</td>
+              <td class="num {% if not row.command_count %}zero{% endif %}">{{ row.command_count }}</td>
+              <td>{{ ui.ts(row.start_time) }}</td>
+              <td>{% if row.end_time %}{{ ui.ts(row.end_time) }}{% else %}<span class="chip state-active">running</span>{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    {{ ui.empty('No sessions recorded') }}
+  {% endif %}
+</div>
+
+<div class="panel" style="margin-top: 14px">
+  <div class="panel-head">
+    <h3>Alerts</h3>
+    <span class="sub">{{ alerts | length }} raised for this IP</span>
+  </div>
+  {% if alerts %}
+    <div class="table-wrap">
+      <table class="grid">
+        <thead><tr><th>Severity</th><th>Rule</th><th>Description</th><th>Status</th><th>Raised</th></tr></thead>
+        <tbody>
+          {% for alert in alerts %}
+            <tr class="{% if alert.severity == 'high' %}is-high{% elif alert.severity == 'medium' %}is-medium{% endif %}">
+              <td>{{ ui.sev(alert.severity) }}</td>
+              <td class="mono">{{ alert.alert_type }}</td>
+              <td class="truncate" style="max-width: 460px">{{ alert.description }}</td>
+              <td>{{ ui.state(alert.status) }}</td>
+              <td>{{ ui.ts(alert.timestamp) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    {{ ui.empty('No alerts', 'Nothing this IP did crossed a configured threshold.') }}
+  {% endif %}
+</div>
+
+<details class="panel" style="margin-top: 14px">
+  <summary class="panel-head" style="cursor: pointer; list-style: none">
+    <h3>Raw event timeline</h3>
+    <span class="sub">{{ timeline | length }} most recent events</span>
+  </summary>
+  <div class="table-wrap">
+    <table class="grid">
+      <thead>
+        <tr><th>Timestamp</th><th>Type</th><th>Node</th><th>Session</th><th>Detail</th></tr>
+      </thead>
+      <tbody>
+        {% for event in timeline %}
+          <tr>
+            <td>{{ ui.ts(event.timestamp) }}</td>
+            <td><span class="tag">{{ event.event_type | event_label }}</span></td>
+            <td class="mono">{{ event.node_id }}</td>
+            <td>
+              {% if event.session_id %}
+                <a class="mono" href="{{ url_for('sessions.detail', session_id=event.session_id) }}">{{ event.session_id }}</a>
+              {% else %}<span class="dim">{{ DASH }}</span>{% endif %}
+            </td>
+            <td class="mono truncate" style="max-width: 420px">
+              {{ event.command or event.username or event.file_name or event.download_url or event.status or '' }}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
+
+{% endblock %}
