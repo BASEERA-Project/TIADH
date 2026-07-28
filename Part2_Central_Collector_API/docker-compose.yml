@@ -1,0 +1,11 @@
+services:
+  collector:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_PATH: /app/data/collector.db
+      NODE_KEYS_JSON: '{"node-01":"dev-node-01-key","node-02":"dev-node-02-key","node-03":"dev-node-03-key"}'
+      MAX_BATCH_SIZE: "20"
+    volumes:
+      - ./data:/app/data

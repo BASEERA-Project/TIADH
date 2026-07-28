@@ -1,0 +1,13 @@
+{
+  "event_id": "550e8400-e29b-41d4-a716-446655440000",
+  "node_id": "node-01",
+  "event_type": "login_attempt",
+  "timestamp": "2026-07-22T11:00:00Z",
+  "session_id": "cowrie-abc123",
+  "attacker_ip": "203.0.113.10",
+  "protocol": "ssh",
+  "details": {
+    "username": "root",
+    "password": "123456"
+  }
+}
