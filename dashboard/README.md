@@ -28,13 +28,36 @@ override it anywhere with `HONEYPOT_DB_PATH`.
 
 ## How it talks to the database
 
-Everything goes through `common.db.database.Database`, opened `read_only=True`
-and scoped to one request (`app/db.py`). Where the storage layer already has a
-helper — `get_overview_stats`, `get_top_attackers`, `get_top_credentials`,
-`get_nodes`, `get_alerts`, `get_reputation`, `get_attacker_profile_inputs`,
-`get_feed_indicators` — the dashboard calls it. The searches, filters and
-pagination those helpers do not offer live in `app/queries.py` and still go
-through `Database.query`.
+**The dashboard writes no SQL and does not import `sqlite3`.** Every read is a
+method on `common.db.database.Database`, opened `read_only=True` and scoped to
+one request (`app/db.py`). Table names, column names, `json_extract` and
+SQLite's date functions all stop at that file — rename a column there and
+nothing here has to change, because there is no second copy of the schema in a
+view function or a template.
+
+The screens are served by the storage layer's dashboard API:
+
+| Need | Call |
+|---|---|
+| Overview tiles | `get_dashboard_overview(window_hours=…)` |
+| Charts | `get_event_activity`, `get_event_type_counts`, `get_top_commands`, `get_top_countries` |
+| Attackers table | `search_attackers(filters, sort, limit, offset)` |
+| Attacker profile | `get_attacker`, `get_attacker_sessions`, `get_attacker_commands`, `get_attacker_usernames`, `get_attacker_nodes`, `get_attacker_events`, `get_attacker_activity`, `get_alerts_for_ip` |
+| Sessions | `search_sessions`, `get_session`, `get_session_events`, `get_alerts_for_session` |
+| Alerts | `search_alerts`, `get_alert_status_counts`, `get_alert_severity_counts`, `get_alert_type_stats` |
+| Nodes | `get_node_statistics`, `get_node_activity` |
+| Filter dropdowns | `get_countries`, `get_protocols`, `get_alert_types`, `get_node_ids` |
+| Readiness | `exists`, `describe` |
+
+Sort keys are whitelisted inside `Database` (`ATTACKER_SORT_KEYS`,
+`SESSION_SORT_KEYS`, `ALERT_SORT_KEYS`). The dashboard passes a key like
+`"score"`; it cannot supply an `ORDER BY`, and an unknown key falls back to the
+default so a stale bookmark still renders.
+
+`app/queries.py` is what is left over once the SQL is gone — window tokens to
+timestamps, page numbers to limit/offset, gap-filling for charts, and the
+amber/red heartbeat verdict. Those are the dashboard's business, not the
+storage layer's.
 
 The one write is acknowledging or closing an alert. It uses a separate writable
 handle and calls `Database.set_alert_status()`; set
@@ -45,9 +68,10 @@ handle and calls `Database.set_alert_status()`; set
 Attempted passwords never reach this process:
 
 * session listings read the `sessions_public` view, not `sessions`;
-* the transcript query selects `json_extract(details,'$.password') IS NOT NULL` —
-  a boolean — so `***MASKED***` is rendered from the fact that a password was
-  submitted, not from a value the template is trusted to hide;
+* `get_session_events()` selects `json_extract(details,'$.password') IS NOT NULL`
+  — a boolean — so `***MASKED***` is rendered from the fact that a password was
+  submitted, not from a value the template is trusted to hide. That guarantee now
+  lives in the storage layer, where no caller can opt out of it;
 * the per-IP export runs through the exporter's `scrub()` and
   `assert_no_secrets()`, which raise rather than redact.
 
@@ -70,7 +94,7 @@ Every setting is an environment variable (`app/settings.py`):
 
 Detection thresholds are **not** listed here on purpose. They belong to
 `common/config.py`, and the rules panel reads them live so it always shows what
-the engine is using.
+the engine is using. Anything schema-shaped belongs to `common/db/`.
 
 It binds to loopback by default. `--host 0.0.0.0` exposes attacker data and the
 outbound feed to the network; set `DASHBOARD_SECRET_KEY` if you do.
@@ -121,7 +145,7 @@ app/
   __init__.py       application factory, CSRF, security headers, nav
   settings.py       environment-driven configuration
   db.py             request-scoped read-only handle (+ the one write path)
-  queries.py        every read, in one place
+  queries.py        adapters — windows, pagination, gap filling, health verdict
   formatting.py     Jinja filters — timestamps, ages, severities, scores
   integrations.py   borrows FeedExporter and the command classifier from core/
   rule_catalog.py   prose for the rules panel; values come from common.config

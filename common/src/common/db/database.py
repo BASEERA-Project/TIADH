@@ -14,9 +14,16 @@ Part 2 (ingestion)   apply_event(), apply_events(), upsert_node(),
 Part 3 (enrichment)  get_ips_needing_enrichment(), upsert_reputation(),
                      get_attacker_profile_inputs()
 Part 4 (this part)   insert_alert(), get_alerts(), get_feed_indicators()
-Part 5 (dashboard)   Database(read_only=True) + the get_* helpers.
-                     ALWAYS read sessions through get_sessions() — it selects
-                     from the masked `sessions_public` view.
+Part 5 (dashboard)   Database(read_only=True) + the "DASHBOARD API" section at
+                     the bottom of this class: search_attackers(),
+                     search_sessions(), search_alerts(), get_session_events(),
+                     get_node_statistics(), get_dashboard_overview() and
+                     friends. Part 5 writes no SQL of its own and does not
+                     import sqlite3 — every screen it renders is one of these
+                     calls, so the schema stops at this file.
+                     ALWAYS read sessions through get_sessions() or
+                     search_sessions() — both select from the masked
+                     `sessions_public` view.
 
 Concurrency notes
 -----------------
@@ -41,7 +48,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from common import config
-from common.db.validation import normalize_event, utc_now, validate_event
+from common.db.validation import normalize_event, utc_ago, utc_now, validate_event
 
 log = logging.getLogger(__name__)
 
@@ -838,6 +845,882 @@ class Database:
             """,
             params,
         )
+
+
+    # =====================================================================
+    # DASHBOARD API  — Part 5
+    #
+    # Part 5 renders screens; it does not know what SQLite is. Every search,
+    # filter, rollup and count it needs is a method below, so table names,
+    # view names, JSON extraction and SQLite's date functions never leave this
+    # module. Change a column here and the dashboard keeps working; there is no
+    # second copy of the schema in a template or a view function.
+    #
+    # Three rules hold throughout this section:
+    #
+    # * **Sessions come from `sessions_public`.** Never the raw table.
+    # * **Passwords are never selected.** The transcript query asks whether a
+    #   password was submitted and returns a boolean, so a plaintext credential
+    #   is not merely masked on screen — it is never read into the process.
+    # * **Sort keys are whitelisted here.** Callers pass a key like "score";
+    #   the SQL it maps to is private. A caller cannot supply an ORDER BY.
+    #
+    # Time windows are passed as canonical v1.3 timestamps — build them with
+    # `validation.utc_ago(hours=24)` rather than with SQLite's datetime('now').
+    # =====================================================================
+
+    #: Sort key -> ORDER BY. Callers may only name a key.
+    _ATTACKER_SORTS = {
+        "last_seen": "s.last_seen DESC",
+        "first_seen": "s.first_seen DESC",
+        "events": "s.event_count DESC",
+        "sessions": "s.session_count DESC",
+        "logins": "s.login_attempts DESC",
+        "commands": "s.command_count DESC",
+        "downloads": "s.download_count DESC",
+        "nodes": "s.node_count DESC",
+        "score": "risk_score DESC, s.event_count DESC",
+        "alerts": "alert_count DESC, s.event_count DESC",
+        "ip": "s.attacker_ip ASC",
+    }
+    _SESSION_SORTS = {
+        "start_time": "s.start_time DESC",
+        "duration": "duration_seconds DESC",
+        "events": "event_count DESC",
+        "commands": "command_count DESC",
+        "logins": "login_attempts DESC",
+        "ip": "s.attacker_ip ASC",
+        "node": "s.node_id ASC, s.start_time DESC",
+    }
+    _ALERT_SORTS = {
+        "timestamp": "a.timestamp DESC",
+        "severity": ("CASE a.severity WHEN 'high' THEN 3 WHEN 'medium' THEN 2 "
+                     "ELSE 1 END DESC, a.timestamp DESC"),
+        "type": "a.alert_type ASC, a.timestamp DESC",
+        "ip": "a.attacker_ip ASC, a.timestamp DESC",
+        "status": "a.status ASC, a.timestamp DESC",
+    }
+
+    ATTACKER_SORT_KEYS = tuple(_ATTACKER_SORTS)
+    SESSION_SORT_KEYS = tuple(_SESSION_SORTS)
+    ALERT_SORT_KEYS = tuple(_ALERT_SORTS)
+
+    @staticmethod
+    def _order_by(sorts: Dict[str, str], key: Optional[str], default: str) -> str:
+        return sorts.get(key or default, sorts[default])
+
+    # -- overview ---------------------------------------------------------
+
+    def get_dashboard_overview(self, window_hours: int = 24) -> Dict[str, Any]:
+        """
+        Headline counters for the Overview screen, in one round trip.
+
+        Deliberately separate from :meth:`get_overview_stats`, which the CLI
+        uses and which compares stored timestamps against SQLite's
+        ``datetime('now')`` — a comparison the ISO 'T' separator wins, turning
+        "the last hour" into "since midnight". Every window here is a bound
+        canonical timestamp, so the numbers mean what their labels say.
+        """
+        params = {
+            "hour": utc_ago(hours=1),
+            "window": utc_ago(hours=window_hours),
+        }
+        stats = self.query_one(
+            """
+            SELECT (SELECT COUNT(*) FROM events)                            AS total_events,
+                   (SELECT COUNT(*) FROM events WHERE timestamp >= :hour)   AS events_last_hour,
+                   (SELECT COUNT(*) FROM events WHERE timestamp >= :window) AS events_in_window,
+                   (SELECT COUNT(*) FROM events
+                     WHERE timestamp >= :window AND event_type != 'heartbeat')
+                                                                            AS attacks_in_window,
+                   (SELECT COUNT(DISTINCT attacker_ip) FROM events)         AS unique_attackers,
+                   (SELECT COUNT(DISTINCT attacker_ip) FROM events
+                     WHERE timestamp >= :window)                            AS attackers_in_window,
+                   (SELECT COUNT(*) FROM sessions_public)                   AS total_sessions,
+                   (SELECT COUNT(*) FROM sessions_public
+                     WHERE status = 'active')                               AS active_sessions,
+                   (SELECT COUNT(*) FROM sessions_public
+                     WHERE start_time >= :window)                           AS sessions_in_window,
+                   (SELECT COUNT(*) FROM nodes WHERE status = 'online')     AS nodes_online,
+                   (SELECT COUNT(*) FROM nodes)                             AS nodes_total,
+                   (SELECT COUNT(*) FROM alerts WHERE status = 'open')      AS open_alerts,
+                   (SELECT COUNT(*) FROM alerts
+                     WHERE status = 'open' AND severity = 'high')           AS open_high_alerts,
+                   (SELECT COUNT(*) FROM alerts WHERE timestamp >= :window) AS alerts_in_window,
+                   (SELECT COUNT(*) FROM reputation)                        AS enriched_ips,
+                   (SELECT MAX(timestamp) FROM events)                      AS latest_event
+            """,
+            params,
+        ) or {}
+
+        lag = self.query_one(
+            """
+            SELECT AVG((julianday(received_at) - julianday(timestamp)) * 86400.0) AS lag
+              FROM (SELECT timestamp, received_at FROM events
+                     ORDER BY received_at DESC LIMIT 500)
+            """
+        )
+        stats["avg_ingest_lag_seconds"] = round((lag or {}).get("lag") or 0.0, 2)
+        stats["nodes_stale"] = max(
+            0, (stats.get("nodes_total") or 0) - (stats.get("nodes_online") or 0)
+        )
+        stats["window_hours"] = window_hours
+        return stats
+
+    def get_event_activity(self, since: str, by: str = "hour") -> List[Dict[str, Any]]:
+        """
+        Event counts bucketed by hour or day, oldest first.
+
+        Buckets on a prefix of the timestamp string: because every stored
+        timestamp is normalised to the same width, the first 13 characters are
+        exactly an hour key and the first 10 exactly a day key, which keeps the
+        whole rollup on the timestamp index.
+        """
+        width = {"hour": 13, "day": 10}.get(by)
+        if width is None:
+            raise StorageError(f"unknown bucket '{by}' (use 'hour' or 'day')")
+
+        return self.query(
+            f"""
+            SELECT substr(timestamp, 1, {width}) AS bucket,
+                   COUNT(*)                      AS total,
+                   SUM(CASE WHEN event_type != 'heartbeat' THEN 1 ELSE 0 END) AS attacks,
+                   SUM(CASE WHEN event_type = 'login_attempt' THEN 1 ELSE 0 END) AS logins,
+                   SUM(CASE WHEN event_type = 'command' THEN 1 ELSE 0 END) AS commands,
+                   COUNT(DISTINCT attacker_ip)   AS ips
+              FROM events
+             WHERE timestamp >= :since
+             GROUP BY bucket
+             ORDER BY bucket
+            """,
+            {"since": since},
+        )
+
+    def get_event_type_counts(self, since: str = None) -> List[Dict[str, Any]]:
+        where = "WHERE timestamp >= :since" if since else ""
+        return self.query(
+            f"SELECT event_type, COUNT(*) AS n FROM events {where} "
+            f"GROUP BY event_type ORDER BY n DESC",
+            {"since": since} if since else {},
+        )
+
+    def get_top_commands(self, limit: int = 10, since: str = None) -> List[Dict[str, Any]]:
+        clause = "AND timestamp >= :since" if since else ""
+        params: Dict[str, Any] = {"limit": limit}
+        if since:
+            params["since"] = since
+        return self.query(
+            f"""
+            SELECT json_extract(details, '$.command') AS command,
+                   COUNT(*)                           AS attempts,
+                   COUNT(DISTINCT attacker_ip)        AS distinct_ips,
+                   MAX(timestamp)                     AS last_seen
+              FROM events
+             WHERE event_type = 'command'
+               AND json_extract(details, '$.command') IS NOT NULL
+               {clause}
+             GROUP BY command
+             ORDER BY attempts DESC
+             LIMIT :limit
+            """,
+            params,
+        )
+
+    def get_top_countries(self, limit: int = 8) -> List[Dict[str, Any]]:
+        return self.query(
+            """
+            SELECT r.country, COUNT(*) AS ips, SUM(s.event_count) AS events
+              FROM reputation r
+              JOIN attacker_summary s ON s.attacker_ip = r.attacker_ip
+             WHERE r.country IS NOT NULL AND r.country != ''
+             GROUP BY r.country
+             ORDER BY events DESC
+             LIMIT :limit
+            """,
+            {"limit": limit},
+        )
+
+    def get_alert_severity_counts(self, status: str = None) -> Dict[str, int]:
+        where = "WHERE status = :status" if status else ""
+        rows = self.query(
+            f"SELECT severity, COUNT(*) AS n FROM alerts {where} GROUP BY severity",
+            {"status": status} if status else {},
+        )
+        counts = {name: 0 for name in config.SEVERITY_ORDER}
+        counts.update({row["severity"]: row["n"] for row in rows})
+        return counts
+
+    def get_alert_status_counts(self) -> Dict[str, int]:
+        rows = self.query("SELECT status, COUNT(*) AS n FROM alerts GROUP BY status")
+        counts = {"open": 0, "acknowledged": 0, "closed": 0}
+        counts.update({row["status"]: row["n"] for row in rows})
+        return counts
+
+    def get_alert_type_stats(self, since: str = None) -> Dict[str, Dict[str, Any]]:
+        """Per-rule alert counts, keyed by alert_type."""
+        where = "WHERE timestamp >= :since" if since else ""
+        rows = self.query(
+            f"""
+            SELECT alert_type,
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END)   AS open_count,
+                   SUM(CASE WHEN severity = 'high' THEN 1 ELSE 0 END) AS high_count,
+                   COUNT(DISTINCT attacker_ip)                        AS distinct_ips,
+                   MAX(timestamp)                                     AS last_fired
+              FROM alerts {where}
+             GROUP BY alert_type
+            """,
+            {"since": since} if since else {},
+        )
+        return {row["alert_type"]: row for row in rows}
+
+    # -- attackers --------------------------------------------------------
+
+    _ATTACKER_SELECT = """
+        SELECT s.attacker_ip,
+               s.first_seen, s.last_seen,
+               s.event_count, s.session_count, s.node_count,
+               s.login_attempts, s.login_successes,
+               s.command_count, s.download_count,
+               r.country, r.city, r.latitude, r.longitude,
+               r.abuse_score, r.profile_score,
+               r.source       AS reputation_source,
+               r.last_updated AS reputation_updated,
+               COALESCE(al.alert_count, 0) AS alert_count,
+               COALESCE(al.high_alerts, 0) AS high_alerts,
+               COALESCE(al.open_alerts, 0) AS open_alerts,
+               MAX(COALESCE(r.abuse_score, 0), COALESCE(r.profile_score, 0)) AS risk_score
+          FROM attacker_summary s
+          LEFT JOIN reputation r ON r.attacker_ip = s.attacker_ip
+          LEFT JOIN (
+                SELECT attacker_ip,
+                       COUNT(*)                                           AS alert_count,
+                       SUM(CASE WHEN severity = 'high' THEN 1 ELSE 0 END) AS high_alerts,
+                       SUM(CASE WHEN status = 'open'   THEN 1 ELSE 0 END) AS open_alerts
+                  FROM alerts GROUP BY attacker_ip
+          ) al ON al.attacker_ip = s.attacker_ip
+    """
+
+    @staticmethod
+    def _attacker_where(filters: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+        """
+        Build the WHERE for :meth:`search_attackers`.
+
+        Accepted keys: q, country, node, min_score, since, enriched
+        ('yes'/'no'), and the flags alerts_only, high_only, breached_only.
+        Anything else is ignored — a caller cannot inject a clause.
+        """
+        clauses: List[str] = []
+        params: Dict[str, Any] = {}
+
+        search = (filters.get("q") or "").strip()
+        if search:
+            clauses.append("(s.attacker_ip LIKE :q OR r.country LIKE :q OR r.city LIKE :q)")
+            params["q"] = f"%{search}%"
+
+        country = (filters.get("country") or "").strip()
+        if country:
+            clauses.append("r.country = :country")
+            params["country"] = country
+
+        if filters.get("min_score"):
+            clauses.append(
+                "MAX(COALESCE(r.abuse_score, 0), COALESCE(r.profile_score, 0)) >= :min_score"
+            )
+            params["min_score"] = int(filters["min_score"])
+
+        if filters.get("alerts_only"):
+            clauses.append("COALESCE(al.alert_count, 0) > 0")
+        if filters.get("high_only"):
+            clauses.append("COALESCE(al.high_alerts, 0) > 0")
+        if filters.get("breached_only"):
+            clauses.append("s.login_successes > 0")
+
+        enriched = filters.get("enriched")
+        if enriched == "yes":
+            clauses.append("r.attacker_ip IS NOT NULL")
+        elif enriched == "no":
+            clauses.append("r.attacker_ip IS NULL")
+
+        if filters.get("since"):
+            clauses.append("s.last_seen >= :since")
+            params["since"] = filters["since"]
+
+        node = (filters.get("node") or "").strip()
+        if node:
+            clauses.append(
+                "EXISTS (SELECT 1 FROM events e "
+                "WHERE e.attacker_ip = s.attacker_ip AND e.node_id = :node)"
+            )
+            params["node"] = node
+
+        return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
+
+    def search_attackers(
+        self,
+        filters: Dict[str, Any] = None,
+        sort: str = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Attackers matching `filters`, as ``(rows, total_matching)``.
+
+        `sort` names a key from :attr:`ATTACKER_SORT_KEYS`; an unknown key falls
+        back to the default rather than raising, so a stale bookmark still
+        renders a page.
+        """
+        where, params = self._attacker_where(filters or {})
+        order = self._order_by(self._ATTACKER_SORTS, sort, "last_seen")
+
+        total = (self.query_one(
+            f"SELECT COUNT(*) AS n FROM ({self._ATTACKER_SELECT} {where})", params
+        ) or {}).get("n") or 0
+
+        rows = self.query(
+            f"{self._ATTACKER_SELECT} {where} ORDER BY {order} LIMIT :limit OFFSET :offset",
+            {**params, "limit": limit, "offset": offset},
+        )
+        return rows, total
+
+    def get_attacker(self, attacker_ip: str) -> Optional[Dict[str, Any]]:
+        """The same row shape :meth:`search_attackers` returns, for one IP."""
+        return self.query_one(
+            f"{self._ATTACKER_SELECT} WHERE s.attacker_ip = :ip", {"ip": attacker_ip}
+        )
+
+    def get_attacker_sessions(self, attacker_ip: str, limit: int = 25) -> List[Dict[str, Any]]:
+        return self.query(
+            """
+            SELECT s.session_id, s.node_id, s.protocol, s.username, s.password,
+                   s.start_time, s.end_time, s.status,
+                   COALESCE(e.event_count, 0)     AS event_count,
+                   COALESCE(e.command_count, 0)   AS command_count,
+                   COALESCE(e.login_attempts, 0)  AS login_attempts,
+                   COALESCE(e.login_successes, 0) AS login_successes
+              FROM sessions_public s
+              LEFT JOIN (
+                    SELECT session_id,
+                           COUNT(*) AS event_count,
+                           SUM(CASE WHEN event_type = 'command' THEN 1 ELSE 0 END) AS command_count,
+                           SUM(CASE WHEN event_type = 'login_attempt' THEN 1 ELSE 0 END) AS login_attempts,
+                           SUM(CASE WHEN event_type = 'login_success' THEN 1 ELSE 0 END) AS login_successes
+                      FROM events GROUP BY session_id
+              ) e ON e.session_id = s.session_id
+             WHERE s.attacker_ip = :ip
+             ORDER BY s.start_time DESC
+             LIMIT :limit
+            """,
+            {"ip": attacker_ip, "limit": limit},
+        )
+
+    def get_alerts_for_ip(self, attacker_ip: str, limit: int = 50) -> List[Dict[str, Any]]:
+        return self.query(
+            """
+            SELECT alert_id, attacker_ip, session_id, alert_type, severity,
+                   timestamp, description, status
+              FROM alerts
+             WHERE attacker_ip = :ip
+             ORDER BY timestamp DESC
+             LIMIT :limit
+            """,
+            {"ip": attacker_ip, "limit": limit},
+        )
+
+    def get_attacker_commands(self, attacker_ip: str, limit: int = 25) -> List[Dict[str, Any]]:
+        return self.query(
+            """
+            SELECT json_extract(details, '$.command') AS command,
+                   COUNT(*)       AS times,
+                   MAX(timestamp) AS last_seen
+              FROM events
+             WHERE event_type = 'command'
+               AND attacker_ip = :ip
+               AND json_extract(details, '$.command') IS NOT NULL
+             GROUP BY command
+             ORDER BY times DESC, last_seen DESC
+             LIMIT :limit
+            """,
+            {"ip": attacker_ip, "limit": limit},
+        )
+
+    def get_attacker_usernames(self, attacker_ip: str, limit: int = 15) -> List[Dict[str, Any]]:
+        """
+        Usernames one IP tried, with how often each was accepted.
+
+        Usernames only. Aggregate password statistics are a legitimate research
+        output but the baseline keeps attempted passwords in local storage, so
+        the counts stop at the username — see :meth:`get_top_credentials`.
+        """
+        return self.query(
+            """
+            SELECT json_extract(details, '$.username') AS username,
+                   COUNT(*) AS attempts,
+                   SUM(CASE WHEN event_type = 'login_success' THEN 1 ELSE 0 END) AS successes
+              FROM events
+             WHERE attacker_ip = :ip
+               AND event_type IN ('login_attempt', 'login_success')
+               AND json_extract(details, '$.username') IS NOT NULL
+             GROUP BY username
+             ORDER BY attempts DESC
+             LIMIT :limit
+            """,
+            {"ip": attacker_ip, "limit": limit},
+        )
+
+    def get_attacker_nodes(self, attacker_ip: str) -> List[Dict[str, Any]]:
+        return self.query(
+            """
+            SELECT node_id, COUNT(*) AS events,
+                   MIN(timestamp) AS first_seen, MAX(timestamp) AS last_seen
+              FROM events
+             WHERE attacker_ip = :ip
+             GROUP BY node_id
+             ORDER BY events DESC
+            """,
+            {"ip": attacker_ip},
+        )
+
+    def get_attacker_events(self, attacker_ip: str, limit: int = 200) -> List[Dict[str, Any]]:
+        """Recent raw events for one IP. Passwords are not among the columns."""
+        return self.query(
+            """
+            SELECT event_id, node_id, session_id, event_type, timestamp, protocol,
+                   json_extract(details, '$.username')     AS username,
+                   json_extract(details, '$.command')      AS command,
+                   json_extract(details, '$.file_name')    AS file_name,
+                   json_extract(details, '$.download_url') AS download_url,
+                   json_extract(details, '$.status')       AS status
+              FROM events
+             WHERE attacker_ip = :ip
+             ORDER BY timestamp DESC
+             LIMIT :limit
+            """,
+            {"ip": attacker_ip, "limit": limit},
+        )
+
+    def get_attacker_activity(self, attacker_ip: str, since: str) -> List[Dict[str, Any]]:
+        return self.query(
+            """
+            SELECT substr(timestamp, 1, 10) AS day, COUNT(*) AS n
+              FROM events
+             WHERE attacker_ip = :ip AND timestamp >= :since
+             GROUP BY day ORDER BY day
+            """,
+            {"ip": attacker_ip, "since": since},
+        )
+
+    # -- sessions ---------------------------------------------------------
+
+    _SESSION_SELECT = """
+        SELECT s.session_id, s.node_id, s.attacker_ip, s.protocol,
+               s.username, s.password, s.start_time, s.end_time, s.status,
+               r.country, r.city, r.abuse_score, r.profile_score,
+               COALESCE(e.event_count, 0)     AS event_count,
+               COALESCE(e.command_count, 0)   AS command_count,
+               COALESCE(e.login_attempts, 0)  AS login_attempts,
+               COALESCE(e.login_successes, 0) AS login_successes,
+               COALESCE(e.download_count, 0)  AS download_count,
+               e.last_event                   AS last_event,
+               CASE WHEN s.end_time IS NOT NULL AND s.start_time IS NOT NULL
+                    THEN CAST((julianday(s.end_time) - julianday(s.start_time)) * 86400.0
+                              AS INTEGER)
+                    END AS duration_seconds
+          FROM sessions_public s
+          LEFT JOIN reputation r ON r.attacker_ip = s.attacker_ip
+          LEFT JOIN (
+                SELECT session_id,
+                       COUNT(*) AS event_count,
+                       MAX(timestamp) AS last_event,
+                       SUM(CASE WHEN event_type = 'command' THEN 1 ELSE 0 END) AS command_count,
+                       SUM(CASE WHEN event_type = 'login_attempt' THEN 1 ELSE 0 END) AS login_attempts,
+                       SUM(CASE WHEN event_type = 'login_success' THEN 1 ELSE 0 END) AS login_successes,
+                       SUM(CASE WHEN event_type = 'file_download' THEN 1 ELSE 0 END) AS download_count
+                  FROM events GROUP BY session_id
+          ) e ON e.session_id = s.session_id
+    """
+
+    @staticmethod
+    def _session_where(filters: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+        """Accepted keys: q, status, node, protocol, ip, since, breached_only,
+        commands_only. Anything else is ignored."""
+        clauses: List[str] = []
+        params: Dict[str, Any] = {}
+
+        search = (filters.get("q") or "").strip()
+        if search:
+            clauses.append(
+                "(s.session_id LIKE :q OR s.attacker_ip LIKE :q OR s.username LIKE :q)"
+            )
+            params["q"] = f"%{search}%"
+
+        for key, column in (("status", "s.status"), ("node", "s.node_id"),
+                            ("protocol", "s.protocol"), ("ip", "s.attacker_ip")):
+            value = (filters.get(key) or "").strip()
+            if value:
+                clauses.append(f"{column} = :{key}")
+                params[key] = value
+
+        if filters.get("breached_only"):
+            clauses.append("COALESCE(e.login_successes, 0) > 0")
+        if filters.get("commands_only"):
+            clauses.append("COALESCE(e.command_count, 0) > 0")
+
+        if filters.get("since"):
+            clauses.append("s.start_time >= :since")
+            params["since"] = filters["since"]
+
+        return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
+
+    def search_sessions(
+        self,
+        filters: Dict[str, Any] = None,
+        sort: str = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Sessions matching `filters`, as ``(rows, total)``. Passwords masked."""
+        where, params = self._session_where(filters or {})
+        order = self._order_by(self._SESSION_SORTS, sort, "start_time")
+
+        total = (self.query_one(
+            f"SELECT COUNT(*) AS n FROM ({self._SESSION_SELECT} {where})", params
+        ) or {}).get("n") or 0
+
+        rows = self.query(
+            f"{self._SESSION_SELECT} {where} ORDER BY {order} LIMIT :limit OFFSET :offset",
+            {**params, "limit": limit, "offset": offset},
+        )
+        return rows, total
+
+    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        return self.query_one(
+            f"{self._SESSION_SELECT} WHERE s.session_id = :sid", {"sid": session_id}
+        )
+
+    def get_session_events(self, session_id: str) -> List[Dict[str, Any]]:
+        """
+        Every event in one session, oldest first, shaped for a transcript.
+
+        ``had_password`` is a boolean, not a value: this asks whether a password
+        was submitted and never selects what it was. A renderer can therefore
+        print the mask from a fact rather than from a string it is trusting
+        itself to remember to hide. `sessions_public` protects the `sessions`
+        copy of a credential; this protects the `events.details` copy.
+        """
+        return self.query(
+            """
+            SELECT event_id, event_type, timestamp, node_id, attacker_ip, protocol,
+                   json_extract(details, '$.username')         AS username,
+                   CASE WHEN json_extract(details, '$.password') IS NULL
+                        THEN 0 ELSE 1 END                      AS had_password,
+                   json_extract(details, '$.command')          AS command,
+                   json_extract(details, '$.download_url')     AS download_url,
+                   json_extract(details, '$.file_name')        AS file_name,
+                   json_extract(details, '$.file_hash')        AS file_hash,
+                   json_extract(details, '$.status')           AS status,
+                   json_extract(details, '$.duration_seconds') AS duration_seconds,
+                   json_extract(details, '$.destination_ip')   AS destination_ip,
+                   json_extract(details, '$.destination_port') AS destination_port,
+                   json_extract(details, '$.source_port')      AS source_port,
+                   json_extract(details, '$.agent_version')    AS agent_version
+              FROM events
+             WHERE session_id = :sid
+             ORDER BY timestamp ASC, received_at ASC
+            """,
+            {"sid": session_id},
+        )
+
+    def get_alerts_for_session(self, session_id: str) -> List[Dict[str, Any]]:
+        return self.query(
+            "SELECT alert_id, alert_type, severity, timestamp, description, status "
+            "FROM alerts WHERE session_id = :sid ORDER BY timestamp ASC",
+            {"sid": session_id},
+        )
+
+    def get_session_ids_for_ip(self, attacker_ip: str) -> List[str]:
+        """Session ids from one IP, newest first — for walking its history."""
+        rows = self.query(
+            "SELECT session_id FROM sessions_public WHERE attacker_ip = :ip "
+            "ORDER BY start_time DESC",
+            {"ip": attacker_ip},
+        )
+        return [row["session_id"] for row in rows]
+
+    # -- alerts -----------------------------------------------------------
+
+    _ALERT_SELECT = """
+        SELECT a.alert_id, a.attacker_ip, a.session_id, a.alert_type,
+               a.severity, a.timestamp, a.description, a.status,
+               r.country, r.city, r.abuse_score, r.profile_score
+          FROM alerts a
+          LEFT JOIN reputation r ON r.attacker_ip = a.attacker_ip
+    """
+
+    @staticmethod
+    def _alert_where(filters: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+        """Accepted keys: q, status, severity, min_severity, type, ip, session,
+        since. Anything else is ignored."""
+        clauses: List[str] = []
+        params: Dict[str, Any] = {}
+
+        search = (filters.get("q") or "").strip()
+        if search:
+            clauses.append(
+                "(a.attacker_ip LIKE :q OR a.description LIKE :q "
+                "OR a.session_id LIKE :q OR a.alert_type LIKE :q)"
+            )
+            params["q"] = f"%{search}%"
+
+        for key, column in (("status", "a.status"), ("severity", "a.severity"),
+                            ("type", "a.alert_type"), ("ip", "a.attacker_ip"),
+                            ("session", "a.session_id")):
+            value = (filters.get(key) or "").strip()
+            if value:
+                clauses.append(f"{column} = :f_{key}")
+                params[f"f_{key}"] = value
+
+        min_severity = (filters.get("min_severity") or "").strip()
+        if min_severity in config.SEVERITY_ORDER:
+            allowed = [
+                name for name, rank in config.SEVERITY_ORDER.items()
+                if rank >= config.SEVERITY_ORDER[min_severity]
+            ]
+            names = [f"minsev_{i}" for i in range(len(allowed))]
+            clauses.append(f"a.severity IN ({', '.join(':' + n for n in names)})")
+            params.update(dict(zip(names, allowed)))
+
+        if filters.get("since"):
+            clauses.append("a.timestamp >= :since")
+            params["since"] = filters["since"]
+
+        return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), params
+
+    def search_alerts(
+        self,
+        filters: Dict[str, Any] = None,
+        sort: str = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Alerts matching `filters`, as ``(rows, total)``.
+
+        The filtering counterpart to :meth:`get_alerts`, which stays as the
+        simple "give me the newest N" call the exporter and the CLI use.
+        """
+        where, params = self._alert_where(filters or {})
+        order = self._order_by(self._ALERT_SORTS, sort, "timestamp")
+
+        total = (self.query_one(
+            f"SELECT COUNT(*) AS n FROM ({self._ALERT_SELECT} {where})", params
+        ) or {}).get("n") or 0
+
+        rows = self.query(
+            f"{self._ALERT_SELECT} {where} ORDER BY {order} LIMIT :limit OFFSET :offset",
+            {**params, "limit": limit, "offset": offset},
+        )
+        return rows, total
+
+    def get_alert(self, alert_id: str) -> Optional[Dict[str, Any]]:
+        return self.query_one(f"{self._ALERT_SELECT} WHERE a.alert_id = :id", {"id": alert_id})
+
+    # -- nodes ------------------------------------------------------------
+
+    def get_node_statistics(self, since: str = None) -> List[Dict[str, Any]]:
+        """
+        Every node with its traffic, lag and recent-window counters.
+
+        The registry row (`nodes`) merged with what the event stream says about
+        it. The *verdict* — how many missed heartbeats counts as degraded — is a
+        policy decision and stays with the caller; this reports measurements.
+
+        Spool depth is not here because it cannot be: `pending_events.jsonl`
+        lives on the node and is not part of the v1.3 contract. Ingest lag
+        (`received_at - timestamp`) is what a draining spool looks like from
+        the collector's side, and it is measured rather than estimated.
+        """
+        stats = {
+            row["node_id"]: row
+            for row in self.query(
+                """
+                SELECT node_id,
+                       COUNT(*)                    AS events_total,
+                       COUNT(DISTINCT session_id)  AS sessions_total,
+                       COUNT(DISTINCT attacker_ip) AS attackers_total,
+                       MAX(timestamp)              AS last_event,
+                       MAX(CASE WHEN event_type = 'heartbeat' THEN timestamp END)
+                                                   AS last_heartbeat,
+                       AVG((julianday(received_at) - julianday(timestamp)) * 86400.0)
+                                                   AS avg_lag_seconds,
+                       MAX((julianday(received_at) - julianday(timestamp)) * 86400.0)
+                                                   AS max_lag_seconds
+                  FROM events GROUP BY node_id
+                """
+            )
+        }
+
+        recent: Dict[str, Dict[str, Any]] = {}
+        alerts: Dict[str, int] = {}
+        if since:
+            recent = {
+                row["node_id"]: row
+                for row in self.query(
+                    """
+                    SELECT node_id,
+                           COUNT(*) AS events_recent,
+                           SUM(CASE WHEN event_type != 'heartbeat' THEN 1 ELSE 0 END)
+                                    AS attacks_recent,
+                           SUM(CASE WHEN event_type = 'heartbeat' THEN 1 ELSE 0 END)
+                                    AS heartbeats_recent
+                      FROM events WHERE timestamp >= :since GROUP BY node_id
+                    """,
+                    {"since": since},
+                )
+            }
+            alerts = {
+                row["node_id"]: row["n"]
+                for row in self.query(
+                    """
+                    SELECT e.node_id, COUNT(DISTINCT a.alert_id) AS n
+                      FROM alerts a
+                      JOIN events e ON e.session_id = a.session_id
+                     WHERE a.session_id IS NOT NULL AND a.timestamp >= :since
+                     GROUP BY e.node_id
+                    """,
+                    {"since": since},
+                )
+            }
+
+        nodes = []
+        for node in self.get_nodes():
+            node_id = node["node_id"]
+            node.update(stats.get(node_id, {}))
+            node.update(recent.get(node_id, {}))
+            node["alerts_recent"] = alerts.get(node_id, 0)
+            for key in ("events_total", "sessions_total", "attackers_total",
+                        "events_recent", "attacks_recent", "heartbeats_recent"):
+                node.setdefault(key, 0)
+            nodes.append(node)
+        return nodes
+
+    def get_node_activity(self, node_id: str, since: str) -> List[Dict[str, Any]]:
+        return self.query(
+            """
+            SELECT substr(timestamp, 1, 13) AS bucket, COUNT(*) AS n
+              FROM events
+             WHERE node_id = :node AND timestamp >= :since
+             GROUP BY bucket ORDER BY bucket
+            """,
+            {"node": node_id, "since": since},
+        )
+
+    # -- filter vocabularies ----------------------------------------------
+
+    def get_countries(self) -> List[str]:
+        rows = self.query(
+            "SELECT DISTINCT country FROM reputation "
+            "WHERE country IS NOT NULL AND country != '' ORDER BY country"
+        )
+        return [row["country"] for row in rows]
+
+    def get_protocols(self) -> List[str]:
+        rows = self.query(
+            "SELECT DISTINCT protocol FROM sessions_public "
+            "WHERE protocol IS NOT NULL ORDER BY protocol"
+        )
+        return [row["protocol"] for row in rows]
+
+    def get_alert_types(self) -> List[str]:
+        rows = self.query("SELECT DISTINCT alert_type FROM alerts ORDER BY alert_type")
+        return [row["alert_type"] for row in rows]
+
+    def get_node_ids(self) -> List[str]:
+        return [row["node_id"] for row in self.get_nodes()]
+
+    # -- introspection ----------------------------------------------------
+
+    def exists(self) -> bool:
+        """True when the database file is present. Cheap; touches no connection."""
+        return self.path.exists()
+
+    def describe(self) -> Dict[str, Any]:
+        """
+        What this handle is pointed at and whether it can be read.
+
+        A readiness probe that reports facts rather than raising, so a caller
+        can render a useful "here is what I looked for and what I found"
+        message instead of a stack trace. Callers never need `sqlite3` for this.
+        """
+        info: Dict[str, Any] = {
+            "path": str(self.path),
+            "exists": self.path.exists(),
+            "readable": False,
+            "read_only": self.read_only,
+            "schema_version": None,
+            "expected_schema_version": self.schema_user_version(),
+            "objects": [],
+            "error": None,
+        }
+        if not info["exists"]:
+            info["error"] = "database file not found"
+            return info
+
+        try:
+            info["schema_version"] = self.current_user_version()
+            info["objects"] = [
+                row["name"]
+                for row in self.query(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type IN ('table','view') ORDER BY type, name"
+                )
+            ]
+            info["readable"] = True
+        except sqlite3.Error as exc:
+            info["error"] = str(exc)
+        return info
+
+    # -- fixtures ---------------------------------------------------------
+
+    def rebase_received_at(self, delay_seconds: int = 1, jitter_seconds: int = 4,
+                           slow_nodes: Sequence[str] = (), slow_delay_seconds: int = 11
+                           ) -> int:
+        """
+        Rewrite `received_at` to a plausible shipping delay. **Fixtures only.**
+
+        The ingest path stamps `received_at` with the wall clock, which is right
+        in production and meaningless for a replayed history: seeding a day of
+        traffic in three seconds makes every event look like it arrived up to
+        24 hours late, and every ingest-lag figure downstream becomes noise.
+
+        Same class of fixture normalisation as ``validation.rebase_events``, and
+        subject to the same rule — never point it at collected data. Returns the
+        number of rows rewritten.
+        """
+        placeholders = ", ".join(f":slow_{i}" for i in range(len(slow_nodes)))
+        case = (
+            f"CASE WHEN node_id IN ({placeholders}) THEN :slow ELSE :base END"
+            if slow_nodes else ":base"
+        )
+        params: Dict[str, Any] = {
+            "base": delay_seconds,
+            "slow": slow_delay_seconds,
+            "jitter": max(1, jitter_seconds),
+        }
+        params.update({f"slow_{i}": node for i, node in enumerate(slow_nodes)})
+
+        with self.transaction() as conn:
+            cur = conn.execute(
+                f"""
+                UPDATE events
+                   SET received_at = strftime(
+                           '%Y-%m-%dT%H:%M:%SZ',
+                           julianday(timestamp)
+                           + ({case} + (abs(random()) % :jitter)) / 86400.0)
+                """,
+                params,
+            )
+            return cur.rowcount
 
 
 # --------------------------------------------------------------------------

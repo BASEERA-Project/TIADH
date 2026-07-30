@@ -75,8 +75,8 @@ def index():
     if feed is None:
         return render_template(
             "feeds.html", title="Feeds", feed=None, params=params,
-            countries=queries.known_countries(db),
-            alert_types=queries.distinct_alert_types(db),
+            countries=db.get_countries(),
+            alert_types=db.get_alert_types(),
             windows=queries.WINDOW_CHOICES, files=FEED_FILES, urls={},
         )
 
@@ -100,8 +100,8 @@ def index():
             indent=2,
             ensure_ascii=False,
         ),
-        countries=queries.known_countries(db),
-        alert_types=queries.distinct_alert_types(db),
+        countries=db.get_countries(),
+        alert_types=db.get_alert_types(),
         windows=queries.WINDOW_CHOICES,
         files=FEED_FILES,
         urls=urls,

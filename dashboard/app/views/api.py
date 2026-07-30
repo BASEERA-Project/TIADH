@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from flask import Blueprint, current_app, jsonify
 
+from common.db.validation import utc_ago, utc_now
+
 from app import queries
 from app.db import DatabaseUnavailable, get_db, health
-from app.formatting import now_utc
 
 bp = Blueprint("api", __name__, url_prefix="/api")
 
@@ -21,18 +22,19 @@ bp = Blueprint("api", __name__, url_prefix="/api")
 def summary():
     """Counters for the header strip and the Overview tiles."""
     db = get_db()
-    stats = queries.overview_stats(db)
+    hours = current_app.config["ACTIVITY_WINDOW_HOURS"]
     nodes = queries.node_health(
         db,
         current_app.config["HEARTBEAT_INTERVAL_SECONDS"],
         current_app.config["HEARTBEAT_WARN_MISSED"],
         current_app.config["HEARTBEAT_CRIT_MISSED"],
+        since=utc_ago(hours=hours),
     )
     return jsonify(
         {
-            "generated_at": now_utc().strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "stats": stats,
-            "severity": queries.severity_breakdown(db, status="open"),
+            "generated_at": utc_now(),
+            "stats": db.get_dashboard_overview(window_hours=hours),
+            "severity": db.get_alert_severity_counts(status="open"),
             "nodes": {
                 "total": len(nodes),
                 "healthy": sum(1 for n in nodes if n["health"] == "healthy"),

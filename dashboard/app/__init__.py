@@ -154,11 +154,7 @@ def _register_context(app: Flask) -> None:
     def open_high_alerts():
         """Badge count for the nav. Never allowed to break a page render."""
         try:
-            row = database.get_db().query_one(
-                "SELECT COUNT(*) AS n FROM alerts "
-                "WHERE status = 'open' AND severity = 'high'"
-            )
-            return (row or {}).get("n") or 0
+            return database.get_db().get_alert_severity_counts(status="open")["high"]
         except Exception:  # noqa: BLE001 - includes the no-database case
             return 0
 

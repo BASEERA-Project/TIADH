@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Tuple
 
 from common.config import KNOWN_NODES, STRICT_NODE_IDS
@@ -117,6 +117,20 @@ TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 def utc_now() -> str:
     """Current time as a canonical Baseline v1.3 timestamp."""
     return datetime.now(timezone.utc).strftime(TIMESTAMP_FORMAT)
+
+
+def utc_ago(**delta) -> str:
+    """
+    A canonical v1.3 timestamp N units in the past, e.g. ``utc_ago(hours=24)``.
+
+    Time windows are built here, in Python, rather than with SQLite's
+    ``datetime('now', '-1 hour')``. Stored timestamps look like
+    ``2026-07-28T14:31:07Z``; SQLite's formatter emits ``2026-07-28 13:31:07``.
+    Compared as strings the dates match and then ``'T'`` (0x54) beats ``' '``
+    (0x20), so an "in the last hour" filter silently matches everything since
+    midnight. Binding a correctly-shaped string is the fix.
+    """
+    return (datetime.now(timezone.utc) - timedelta(**delta)).strftime(TIMESTAMP_FORMAT)
 
 
 def parse_timestamp(value: str) -> datetime:

@@ -15,6 +15,8 @@ import json
 
 from flask import Blueprint, Response, abort, current_app, render_template
 
+from common.db.database import Database
+
 from app import queries
 from app.db import get_db
 from app.formatting import now_utc
@@ -32,17 +34,16 @@ def index():
     db = get_db()
     page, per_page = paging()
     filters = collect(*FILTER_NAMES, flags=FILTER_FLAGS)
-    result = queries.attackers_page(db, filters, page, per_page)
 
     return render_template(
         "attackers.html",
         title="Attackers",
-        page=result,
+        page=queries.attackers_page(db, filters, page, per_page),
         filters=filters,
         filter_count=active_filters(filters),
-        countries=queries.known_countries(db),
-        nodes=queries.distinct_nodes(db),
-        sorts=queries.ATTACKER_SORTS,
+        countries=db.get_countries(),
+        nodes=db.get_node_ids(),
+        sorts=Database.ATTACKER_SORT_KEYS,
         windows=queries.WINDOW_CHOICES,
     )
 
@@ -50,7 +51,7 @@ def index():
 @bp.route("/<ip>")
 def profile(ip: str):
     db = get_db()
-    summary = queries.attacker_row(db, ip)
+    summary = db.get_attacker(ip)
     if summary is None:
         # An IP can exist in reputation without ever having produced an event.
         reputation = db.get_reputation(ip)
@@ -58,7 +59,7 @@ def profile(ip: str):
             abort(404, f"no activity recorded for {ip}")
         summary = {"attacker_ip": ip, **reputation}
 
-    commands = queries.attacker_commands(db, ip, limit=20)
+    commands = db.get_attacker_commands(ip, limit=20)
     for row in commands:
         verdict = classify_command(row.get("command") or "")
         row["risk"] = {"severity": verdict[0], "label": verdict[1]} if verdict else None
@@ -70,13 +71,13 @@ def profile(ip: str):
         summary=summary,
         profile_inputs=db.get_attacker_profile_inputs(ip),
         reputation=db.get_reputation(ip),
-        sessions=queries.attacker_sessions(db, ip, limit=25),
-        alerts=queries.attacker_alerts(db, ip, limit=50),
+        sessions=db.get_attacker_sessions(ip, limit=25),
+        alerts=db.get_alerts_for_ip(ip, limit=50),
         commands=commands,
-        usernames=queries.attacker_usernames(db, ip, limit=12),
-        nodes=queries.attacker_nodes(db, ip),
-        daily=queries.attacker_daily(db, ip, days=14),
-        timeline=queries.attacker_timeline(db, ip, limit=120),
+        usernames=db.get_attacker_usernames(ip, limit=12),
+        nodes=db.get_attacker_nodes(ip),
+        daily=queries.daily_activity(db, ip, days=14),
+        timeline=db.get_attacker_events(ip, limit=120),
     )
 
 
@@ -93,7 +94,7 @@ def export(ip: str, fmt: str):
         abort(404)
 
     db = get_db()
-    summary = queries.attacker_row(db, ip) or {"attacker_ip": ip}
+    summary = db.get_attacker(ip) or {"attacker_ip": ip}
     reputation = db.get_reputation(ip) or {}
     dossier = {
         "generated_at": now_utc().strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -101,11 +102,11 @@ def export(ip: str, fmt: str):
         "attacker_ip": ip,
         "summary": summary,
         "reputation": reputation,
-        "nodes": queries.attacker_nodes(db, ip),
-        "usernames": queries.attacker_usernames(db, ip, limit=100),
-        "commands": queries.attacker_commands(db, ip, limit=200),
-        "sessions": queries.attacker_sessions(db, ip, limit=200),
-        "alerts": queries.attacker_alerts(db, ip, limit=500),
+        "nodes": db.get_attacker_nodes(ip),
+        "usernames": db.get_attacker_usernames(ip, limit=100),
+        "commands": db.get_attacker_commands(ip, limit=200),
+        "sessions": db.get_attacker_sessions(ip, limit=200),
+        "alerts": db.get_alerts_for_ip(ip, limit=500),
         "notice": (
             "Attempted credentials are retained locally and are masked here. "
             "Honeypot observations should be corroborated before blocking."
@@ -124,7 +125,7 @@ def export(ip: str, fmt: str):
         )
 
     buffer = io.StringIO()
-    row = {**{k: v for k, v in summary.items()}, **{
+    row = {**dict(summary), **{
         f"reputation_{k}": v for k, v in reputation.items() if k != "attacker_ip"
     }}
     writer = csv.DictWriter(

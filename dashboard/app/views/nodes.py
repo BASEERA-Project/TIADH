@@ -16,9 +16,11 @@ from __future__ import annotations
 
 from flask import Blueprint, current_app, render_template
 
+from common import config
+from common.db.validation import utc_ago
+
 from app import queries
 from app.db import get_db
-from common import config
 
 bp = Blueprint("nodes", __name__, url_prefix="/nodes")
 
@@ -26,23 +28,23 @@ bp = Blueprint("nodes", __name__, url_prefix="/nodes")
 @bp.route("/")
 def index():
     db = get_db()
+    since = utc_ago(hours=24)
+
     nodes = queries.node_health(
         db,
         current_app.config["HEARTBEAT_INTERVAL_SECONDS"],
         current_app.config["HEARTBEAT_WARN_MISSED"],
         current_app.config["HEARTBEAT_CRIT_MISSED"],
+        since=since,
     )
     for node in nodes:
-        node["activity"] = queries.node_activity(db, node["node_id"], hours=24)
+        node["activity"] = db.get_node_activity(node["node_id"], since)
 
-    peak = max(
-        (row["n"] for node in nodes for row in node["activity"]), default=0
-    )
     return render_template(
         "nodes.html",
         title="Nodes",
         nodes=nodes,
-        peak=peak,
+        peak=max((row["n"] for node in nodes for row in node["activity"]), default=0),
         heartbeat_interval=current_app.config["HEARTBEAT_INTERVAL_SECONDS"],
         warn_missed=current_app.config["HEARTBEAT_WARN_MISSED"],
         crit_missed=current_app.config["HEARTBEAT_CRIT_MISSED"],

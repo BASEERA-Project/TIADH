@@ -3,17 +3,20 @@ Sessions — the list, and the transcript.
 
 The transcript is the screen worth remembering: one honeypot session replayed as
 a terminal, timestamped down the left, with the commands the attacker typed shown
-as they were typed. Passwords render as ``***MASKED***`` because the query that
-built the page asked *whether* a password was submitted and never asked what it
-was — see ``queries.session_transcript``.
+as they were typed. Passwords render as ``***MASKED***`` because the storage
+API's ``get_session_events()`` reports *whether* a password was submitted and
+never returns what it was.
 """
 
 from __future__ import annotations
 
 from flask import Blueprint, abort, render_template
 
+from common.db.database import Database
+
 from app import queries
 from app.db import get_db
+from app.formatting import to_datetime
 from app.integrations import classify_command
 from app.views import active_filters, collect, paging
 
@@ -34,23 +37,27 @@ LINE_KINDS = {
     "heartbeat": "meta",
 }
 
+#: A pause longer than this gets its own divider in the transcript. Below it the
+#: gap is machine-speed and saying so adds nothing; above it, the pause is the
+#: attacker thinking, and that is worth seeing.
+GAP_THRESHOLD_SECONDS = 60
+
 
 @bp.route("/")
 def index():
     db = get_db()
     page, per_page = paging()
     filters = collect(*FILTER_NAMES, flags=FILTER_FLAGS)
-    result = queries.sessions_page(db, filters, page, per_page)
 
     return render_template(
         "sessions.html",
         title="Sessions",
-        page=result,
+        page=queries.sessions_page(db, filters, page, per_page),
         filters=filters,
         filter_count=active_filters(filters),
-        nodes=queries.distinct_nodes(db),
-        protocols=queries.distinct_protocols(db),
-        sorts=queries.SESSION_SORTS,
+        nodes=db.get_node_ids(),
+        protocols=db.get_protocols(),
+        sorts=Database.SESSION_SORT_KEYS,
         windows=queries.WINDOW_CHOICES,
     )
 
@@ -58,11 +65,11 @@ def index():
 @bp.route("/<path:session_id>")
 def detail(session_id: str):
     db = get_db()
-    header = queries.session_header(db, session_id)
+    header = db.get_session(session_id)
     if header is None:
         abort(404, f"no session {session_id}")
 
-    events = queries.session_transcript(db, session_id)
+    events = db.get_session_events(session_id)
     lines = _with_gaps([_line(event) for event in events])
 
     return render_template(
@@ -71,7 +78,7 @@ def detail(session_id: str):
         session=header,
         lines=lines,
         counts=_counts(events),
-        alerts=queries.session_alerts(db, session_id),
+        alerts=db.get_alerts_for_session(session_id),
         neighbours=queries.adjacent_sessions(db, session_id, header.get("attacker_ip")),
         reputation=db.get_reputation(header.get("attacker_ip")),
         risky_count=sum(1 for line in lines if line.get("risk")),
@@ -89,8 +96,6 @@ def _line(event: dict) -> dict:
     line = dict(event)
     line["kind"] = LINE_KINDS.get(event["event_type"], "meta")
 
-    if event["event_type"] == "login_success":
-        line["kind"] = "auth-ok"
     if event["event_type"] == "session_end" and event.get("status") in ("failed", "error"):
         line["kind"] = "end-failed"
 
@@ -101,16 +106,8 @@ def _line(event: dict) -> dict:
     return line
 
 
-#: A pause longer than this gets its own divider in the transcript. Below it the
-#: gap is machine-speed and saying so adds nothing; above it, the pause is the
-#: attacker thinking, and that is worth seeing.
-GAP_THRESHOLD_SECONDS = 60
-
-
 def _with_gaps(lines: list) -> list:
     """Annotate each line with the idle time since the previous one."""
-    from app.formatting import to_datetime
-
     previous = None
     for line in lines:
         moment = to_datetime(line.get("timestamp"))

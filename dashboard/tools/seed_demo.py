@@ -380,35 +380,6 @@ def build_events(rng, attackers, now: datetime, hours: int, quiet_node: str
 # Loading
 # --------------------------------------------------------------------------
 
-def _rewrite_ingest_lag(db: Database, quiet_node: str) -> None:
-    """
-    Give every event a plausible ``received_at``.
-
-    The ingest path stamps ``received_at`` with the wall clock, which is correct
-    in production and meaningless for a replayed history: seeding a day of
-    traffic in three seconds makes every event look like it arrived up to
-    24 hours late, and the ingest-lag figures on Overview and Nodes become
-    noise. This rewrites the column to the delay each event *would* have had —
-    a couple of seconds normally, and noticeably more for the sensor that went
-    quiet, so its spool drain is visible.
-
-    Same class of fixture normalisation as ``validation.rebase_events``, and
-    like that function it is only ever applied to generated data.
-    """
-    with db.transaction() as conn:
-        conn.execute(
-            """
-            UPDATE events
-               SET received_at = strftime(
-                       '%Y-%m-%dT%H:%M:%SZ',
-                       julianday(timestamp)
-                       + (CASE node_id WHEN :quiet THEN 11 ELSE 1 END
-                          + (abs(random()) % 5)) / 86400.0)
-            """,
-            {"quiet": quiet_node},
-        )
-
-
 def load(db: Database, events: List[Dict[str, Any]], attackers, now: datetime,
          quiet_node: str, run_alerts: bool, verbose: bool) -> Dict[str, Any]:
     from alerting.alert_engine import AlertEngine  # noqa: PLC0415 - needs core on path
@@ -471,7 +442,12 @@ def load(db: Database, events: List[Dict[str, Any]], attackers, now: datetime,
     if verbose:
         print(" " * 60, end="\r")
 
-    _rewrite_ingest_lag(db, quiet_node)
+    # Seeding a day of traffic in three seconds leaves every event stamped as
+    # having arrived hours late, which makes every ingest-lag figure downstream
+    # meaningless. The storage layer's fixture helper rewrites received_at to
+    # the delay each event would really have had — and gives the sensor that
+    # went quiet a visibly worse one, so its spool drain shows up on Nodes.
+    db.rebase_received_at(slow_nodes=[quiet_node])
 
     # The housekeeping a live deployment runs on a timer.
     offline = db.mark_stale_nodes_offline()

@@ -10,11 +10,11 @@
 {% block content %}
 
 <div class="tiles">
-  {{ ui.tile('Attack events, 24h',
-             stats.attacks_last_24h | compact,
+  {{ ui.tile('Attack events, ' ~ activity_hours ~ 'h',
+             stats.attacks_in_window | compact,
              url_for('sessions.index', window='24h'),
              (stats.events_last_hour | number) ~ ' in the last hour',
-             stat='attacks_last_24h') }}
+             stat='attacks_in_window') }}
 
   {{ ui.tile('Unique attacker IPs',
              stats.unique_attackers | compact,
@@ -25,7 +25,7 @@
   {{ ui.tile('Sessions',
              stats.total_sessions | compact,
              url_for('sessions.index'),
-             (stats.sessions_last_24h | number) ~ ' started in 24h',
+             (stats.sessions_in_window | number) ~ ' started in ' ~ activity_hours ~ 'h',
              stat='total_sessions') }}
 
   {{ ui.tile('Active sessions',
@@ -38,7 +38,7 @@
   {{ ui.tile('Open alerts',
              stats.open_alerts | compact,
              url_for('alerts.index', status='open'),
-             (stats.alerts_last_24h | number) ~ ' raised in 24h',
+             (stats.alerts_in_window | number) ~ ' raised in ' ~ activity_hours ~ 'h',
              tone='is-warn' if stats.open_alerts else '',
              stat='open_alerts') }}
 

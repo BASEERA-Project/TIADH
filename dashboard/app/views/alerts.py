@@ -11,11 +11,12 @@ from __future__ import annotations
 from flask import (Blueprint, abort, flash, redirect, render_template, request,
                    url_for)
 
+from common import config
+from common.db.database import Database, StorageError
+
 from app import queries, rule_catalog
 from app.db import get_db, get_writable_db
 from app.views import active_filters, collect, paging
-from common import config
-from common.db.database import StorageError
 
 bp = Blueprint("alerts", __name__, url_prefix="/alerts")
 
@@ -30,23 +31,22 @@ def index():
     db = get_db()
     page, per_page = paging()
     filters = collect(*FILTER_NAMES)
-    result = queries.alerts_page(db, filters, page, per_page)
 
     return render_template(
         "alerts.html",
         title="Alerts",
-        page=result,
+        page=queries.alerts_page(db, filters, page, per_page),
         filters=filters,
         filter_count=active_filters(filters),
         statuses=VALID_STATUSES,
         severities=sorted(config.SEVERITY_ORDER, key=config.SEVERITY_ORDER.get, reverse=True),
-        alert_types=queries.distinct_alert_types(db),
-        sorts=queries.ALERT_SORTS,
+        alert_types=db.get_alert_types(),
+        sorts=Database.ALERT_SORT_KEYS,
         windows=queries.WINDOW_CHOICES,
-        status_counts=queries.alert_status_counts(db),
-        severity_counts=queries.severity_breakdown(db, status="open"),
+        status_counts=db.get_alert_status_counts(),
+        severity_counts=db.get_alert_severity_counts(status="open"),
         rules=rule_catalog.catalog(),
-        rule_stats=queries.alert_type_stats(db),
+        rule_stats=db.get_alert_type_stats(),
         engine_settings=rule_catalog.global_settings(),
         patterns=rule_catalog.patterns_by_severity(),
     )

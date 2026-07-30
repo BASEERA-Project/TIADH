@@ -1,11 +1,15 @@
 """
 app/db.py — Request-scoped access to the shared database.
 
+The dashboard never opens a database itself and never imports ``sqlite3``. It
+holds a ``common.db.database.Database`` handle and calls methods on it; that
+class owns the connection, the schema and the SQL dialect.
+
 Rules this module enforces so no view has to remember them:
 
-* Every read goes through ``common.db.database.Database`` opened with
-  ``read_only=True``. SQLite is opened with ``mode=ro``, so a bug in a view
-  physically cannot take a write lock away from the collector.
+* Every read goes through a handle opened ``read_only=True``. SQLite is opened
+  with ``mode=ro``, so a bug in a view physically cannot take a write lock away
+  from the collector.
 * One handle per request, closed on teardown. ``Database`` caches connections in
   ``threading.local``; under a threaded WSGI server those would otherwise
   accumulate one connection per worker thread and never be released.
@@ -16,7 +20,6 @@ Rules this module enforces so no view has to remember them:
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Optional
 
 from flask import current_app, g
@@ -36,10 +39,9 @@ def get_db() -> Database:
     """The read-only handle for this request, opened on first use."""
     handle: Optional[Database] = getattr(g, "_db", None)
     if handle is None:
-        path = _path()
-        if not path.exists():
-            raise DatabaseUnavailable(f"no database at {path}")
-        handle = Database(path=path, read_only=True)
+        handle = Database(path=_path(), read_only=True)
+        if not handle.exists():
+            raise DatabaseUnavailable(f"no database at {handle.path}")
         g._db = handle
     return handle
 
@@ -68,44 +70,17 @@ def close_db(_exc=None) -> None:
         if handle is not None:
             try:
                 handle.close()
-            except sqlite3.Error:  # pragma: no cover - closing must never 500
+            except Exception:  # noqa: BLE001 - closing must never turn into a 500
                 pass
             setattr(g, attr, None)
 
 
 def health() -> dict:
     """
-    Cheap readiness probe, rendered by the setup screen when something is wrong.
+    Readiness facts for the setup screen: where the dashboard looked, what it
+    found, and whether the schema is the version the code expects.
 
-    Returns the facts a person needs to fix it: where the dashboard looked, what
-    it found, and whether the schema is the version the code expects.
+    ``Database.describe()`` reports rather than raises, so this needs no
+    exception handling and no knowledge of the driver.
     """
-    path = _path()
-    info = {
-        "path": str(path),
-        "exists": path.exists(),
-        "readable": False,
-        "schema_version": None,
-        "expected_schema_version": Database.schema_user_version(),
-        "tables": [],
-        "error": None,
-    }
-    if not info["exists"]:
-        info["error"] = "database file not found"
-        return info
-
-    try:
-        db = Database(path=path, read_only=True)
-        info["schema_version"] = db.current_user_version()
-        info["tables"] = [
-            row["name"]
-            for row in db.query(
-                "SELECT name FROM sqlite_master "
-                "WHERE type IN ('table','view') ORDER BY type, name"
-            )
-        ]
-        info["readable"] = True
-        db.close()
-    except sqlite3.Error as exc:
-        info["error"] = str(exc)
-    return info
+    return Database(path=_path(), read_only=True).describe()

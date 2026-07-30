@@ -67,20 +67,6 @@ def age_seconds(value) -> Optional[float]:
     return (now_utc() - moment).total_seconds()
 
 
-def iso_ago(**delta) -> str:
-    """
-    A v1.3 timestamp N units in the past, for use as a bound query parameter.
-
-    Time windows are computed in Python rather than with SQLite's
-    ``datetime('now', ...)`` because stored timestamps carry the ISO 'T' and 'Z'
-    that SQLite's own formatter omits — comparing the two as strings silently
-    matches the wrong rows.
-    """
-    from datetime import timedelta
-
-    return (now_utc() - timedelta(**delta)).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 # -- filters ---------------------------------------------------------------
 
 def fmt_number(value) -> str:
