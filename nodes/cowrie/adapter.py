@@ -7,11 +7,18 @@ import os
 import requests
 import queue
 
-NODE_ID = "node-02"
-LOG_PATH = "../cowrie-logs/cowrie.json"
-PROTOCOL = "ssh"
+# All four come from the environment (see .env.example) so the same file runs
+# on every sensor. NODE_ID must appear in the collector's KNOWN_NODES, and
+# NODE_KEY must match that node's entry in the collector's NODE_KEYS_JSON.
+#
+# This host is a different machine from the aggregator, so it does not share
+# the aggregator's .env — and it has no `common` package to load one. Export
+# these, or put them in nodes/cowrie/.env and source it.
+NODE_ID = os.environ.get("NODE_ID", "node-02")
+LOG_PATH = os.environ.get("LOG_PATH", "../cowrie-logs/cowrie.json")
+PROTOCOL = os.environ.get("PROTOCOL", "ssh")
 
-COLLECTOR_URL = os.environ.get("COLLECTOR_URL", "http://localhost:5000/api/events")
+COLLECTOR_URL = os.environ.get("COLLECTOR_URL", "http://localhost:8000/api/events")
 NODE_KEY = os.environ.get("NODE_KEY", "dev-test-key")
 
 event_queue = queue.Queue()

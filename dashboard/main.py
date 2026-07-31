@@ -61,6 +61,13 @@ def main(argv=None) -> int:
         datefmt="%Y-%m-%dT%H:%M:%SZ",
     )
 
+    from common import config as common_config
+
+    if common_config.ENV_FILES_LOADED:
+        logging.getLogger("config").info(
+            "loaded %s", ", ".join(str(p) for p in common_config.ENV_FILES_LOADED)
+        )
+
     from app import create_app
 
     app = create_app()

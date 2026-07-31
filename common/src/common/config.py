@@ -1,12 +1,25 @@
 """
-config.py — Central configuration for Part 4 (Storage, Alerting & Feed Export).
+config.py — Central configuration for the whole system.
 
 Every value is overridable through an environment variable so that nobody has to
-edit source code to point at a different database or tune a threshold. Copy
-`.env.example` to `.env` and export it (`set -a; . ./.env; set +a`) before running.
+edit source code to point at a different database or tune a threshold.
 
-Nothing secret lives in here. Node keys belong to Part 2 (the collector), not to
-Part 4.
+Where the values come from
+--------------------------
+On import, this module loads `.env` and `.env.secrets` from the repository root
+(see `_load_env_files` for the search order) and folds them into `os.environ`.
+**A real environment variable always wins over the file**, so `--db`, Docker's
+`environment:` block and CI overrides keep working untouched.
+
+This has to happen here, at import time, because the constants below are
+evaluated on import — a loader called from `main()` would already be too late.
+Doing it in `common` rather than in each entry point means every part picks the
+same file up automatically, and it is why the parsing below is hand-rolled
+rather than `python-dotenv`: `common` depends on nothing outside the standard
+library, and everything else depends on `common`.
+
+Nothing secret lives in this file. Secrets live in `.env.secrets`, which is
+loaded the same way but kept separate so the config template can be committed.
 """
 
 from __future__ import annotations
@@ -19,6 +32,102 @@ from pathlib import Path
 # --------------------------------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent
+
+# --------------------------------------------------------------------------
+# .env loading — must run before the first os.getenv() below
+# --------------------------------------------------------------------------
+
+#: Files read from the repository root, in this order. Later files win over
+#: earlier ones; a real environment variable wins over both.
+ENV_FILENAMES = (".env", ".env.secrets")
+
+
+def _parse_env_file(path: Path) -> dict:
+    """
+    Parse one `KEY=value` file.
+
+    Deliberately not `sh`: sourcing these files with `set -a; . ./.env` strips
+    the quotes out of `NODE_KEYS_JSON` (leaving invalid JSON) and truncates any
+    unquoted value containing spaces at the first word. This reads the file as
+    data instead, so both survive.
+
+    An unquoted value may carry a trailing ` # comment`; a quoted value is taken
+    verbatim, which is how you write a value that genuinely contains ` #`.
+    """
+    values: dict = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+
+        key, separator, value = line.partition("=")
+        key = key.strip()
+        if not separator or not key:
+            continue
+
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        else:
+            value = value.split(" #", 1)[0].rstrip()
+        values[key] = value
+    return values
+
+
+def _search_directories():
+    """
+    Yield directories to look in: upwards from the working directory, then
+    upwards from this package.
+
+    Each walk stops at the repository root, and never reaches the home
+    directory or the filesystem root even when there is no repository — a
+    stray `~/.env` from some unrelated project must never configure this one.
+    """
+    home = Path.home()
+    for start in (Path.cwd(), BASE_DIR):
+        for directory in (start, *start.parents):
+            if directory == home or directory == directory.parent:
+                break
+            yield directory
+            if (directory / ".git").exists():
+                break
+
+
+def _load_env_files() -> list:
+    """
+    Fold the env files into `os.environ` and return the ones actually read.
+
+    Set `TIADH_ENV_FILE` to bypass the search and name the files explicitly
+    (`os.pathsep`-separated). Set it to the empty string to load nothing at all,
+    which is what a test run or a fully environment-driven deployment wants.
+    """
+    override = os.getenv("TIADH_ENV_FILE")
+    if override is not None:
+        candidates = [Path(p).expanduser() for p in override.split(os.pathsep) if p.strip()]
+    else:
+        candidates = []
+        for directory in _search_directories():
+            found = [directory / name for name in ENV_FILENAMES if (directory / name).is_file()]
+            if found:
+                candidates = found
+                break
+
+    loaded = []
+    for path in candidates:
+        if not path.is_file():
+            continue
+        for key, value in _parse_env_file(path).items():
+            # setdefault, not assignment: the real environment outranks the file.
+            os.environ.setdefault(key, value)
+        loaded.append(path)
+    return loaded
+
+
+#: The env files this process actually read. Entry points log it, because
+#: "which config is live" is the question you ask when something looks wrong.
+ENV_FILES_LOADED = _load_env_files()
 
 #: Location of the shared SQLite database. Parts 2, 3 and 5 must point at the
 #: *same* file. Keep it on local disk — SQLite over NFS/SMB corrupts.
@@ -57,9 +166,17 @@ MASK = "***MASKED***"
 #: Milliseconds a writer waits for a lock before raising "database is locked".
 BUSY_TIMEOUT_MS = int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "5000"))
 
+#: Baseline v1.3 heartbeat interval. A contract value, not a preference: the
+#: node adapters send on it, the sweeper below derives its timeout from it, and
+#: the dashboard reports node health in *missed heartbeats* against it.
+HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "60"))
+
 #: A node with no event or heartbeat for this many seconds is marked offline.
-#: Baseline heartbeat interval is 60s, so 180s == three missed heartbeats.
-NODE_OFFLINE_AFTER_SECONDS = int(os.getenv("NODE_OFFLINE_AFTER_SECONDS", "180"))
+#: Three missed heartbeats, derived rather than hardcoded so the two cannot
+#: drift apart.
+NODE_OFFLINE_AFTER_SECONDS = int(
+    os.getenv("NODE_OFFLINE_AFTER_SECONDS", str(3 * HEARTBEAT_INTERVAL_SECONDS))
+)
 
 #: A session with no activity for this long is force-closed by the sweeper, so
 #: `sessions.status` does not sit on 'active' forever when a node dies mid-session.

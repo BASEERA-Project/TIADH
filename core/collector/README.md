@@ -4,6 +4,12 @@ Lives at `core/collector/` and is part of the `core` uv project, alongside the
 CLI (`core/main.py`) and the enricher (`core/enricher/`). It has no environment
 of its own: `uv sync` in `core/` installs everything it needs.
 
+**In a deployment you do not start this on its own.** `uv run python main.py
+serve` from `core/` runs the collector, the enricher and the alert/export cycle
+in one process against one database handle — see the root README. The uvicorn
+command below is still the right thing for working on the collector by itself,
+with `--reload`.
+
 This service receives team-standardised honeypot events at `POST /api/events`,
 validates them against **Baseline v1.3**, authenticates the sending node, and
 persists everything through the shared **`Database` class in the `common`
@@ -51,23 +57,23 @@ uv sync
 uv run python main.py init
 ```
 
-### 2. Point at the shared database
+### 2. Configure
+
+The collector has no config file of its own. It reads the repository-root
+`.env` / `.env.secrets`, which `common/config.py` loads on import:
 
 ```bash
-cp collector/.env.example collector/.env
+cd ../..                              # repository root
+cp .env.example .env
+cp .env.secrets.example .env.secrets   # NODE_KEYS_JSON lives here
 ```
 
-Edit it and set at minimum:
-
-```dotenv
-# Absolute path to the same DB file `main.py init` created
-HONEYPOT_DB_PATH=/absolute/path/to/common/src/common/honeypot_aggregator.db
-```
-
-Nothing points at the storage layer itself: `common` is installed as a
+`MAX_BATCH_SIZE` and `MAINTENANCE_INTERVAL_SECONDS` are in `.env`, and
+`NODE_KEYS_JSON` is in `.env.secrets`. A real environment variable outranks
+both. Nothing points at the storage layer itself: `common` is installed as a
 dependency, so `from common.db.database import Database` just works.
 
-### 3. Run the collector
+### 3. Run the collector on its own
 
 From `core/`:
 
@@ -75,7 +81,9 @@ From `core/`:
 uv run uvicorn --app-dir collector app.main:app --reload
 ```
 
-Open `http://127.0.0.1:8000/docs` to test the API interactively.
+Open `http://127.0.0.1:8000/docs` to test the API interactively. For the
+deployed shape — collector plus enricher plus alert/export cycle — use
+`uv run python main.py serve` instead.
 
 ---
 
@@ -126,37 +134,37 @@ uv run pytest -q
 
 ## Docker
 
-> **Before running**, ensure the shared database volume exists and the schema
-> has been initialised:
->
-> ```bash
-> cd core
-> uv run python main.py init
-> ```
+The image is now the whole aggregator, not just the collector, so it lives one
+level up at `core/Dockerfile` and its `CMD` is `main.py serve`:
 
 ```bash
-cd core/collector
+docker volume create tiadh_db      # once — the shared database volume
+cd core
 docker compose up --build
 ```
 
-The build context is the repository root so the image can install `core` and
-its `common` dependency together; `.dockerignore` keeps local venvs and
-database files out of it.
+`serve` creates the schema on startup, so there is no separate init step. The
+build context is the repository root so the image can install `core` and its
+`common` dependency together; `.dockerignore` keeps local venvs and database
+files out of it.
 
-The compose file mounts a shared `tiadh_db` named volume for the database.
-All parts that run in Docker must use the **same named volume** so they share
-one file.
+The compose file mounts a `tiadh_db` named volume for the database and the
+exported feeds. The dashboard must mount the **same named volume** if it also
+runs in Docker.
 
 ---
 
 ## Environment variables
 
-| Variable | Default | Description |
-|---|---|---|
-| `HONEYPOT_DB_PATH` | `common/src/common/honeypot_aggregator.db` | Absolute path to the shared SQLite database. Must match the enricher, the alert engine and the dashboard. |
-| `NODE_KEYS_JSON` | dev keys | JSON object mapping `node-id` → secret key. |
-| `MAX_BATCH_SIZE` | `20` | Maximum events per `POST /api/events` request. |
-| `MAINTENANCE_INTERVAL_SECONDS` | `60` | How often the housekeeping loop runs (stale nodes + sessions). |
+Set in the repository-root `.env` / `.env.secrets` (see the root README), or
+exported — an exported variable wins.
+
+| Variable | Default | Lives in | Description |
+|---|---|---|---|
+| `HONEYPOT_DB_PATH` | inside the installed `common` package | `.env` | The shared SQLite database. Must resolve to the same file as the enricher, the alert engine and the dashboard — so make it absolute if you set it. |
+| `NODE_KEYS_JSON` | dev keys | `.env.secrets` | JSON object mapping `node-id` → secret key. |
+| `MAX_BATCH_SIZE` | `20` | `.env` | Maximum events per `POST /api/events` request. |
+| `MAINTENANCE_INTERVAL_SECONDS` | `60` | `.env` | How often the housekeeping loop runs (stale nodes + sessions). |
 
 ---
 

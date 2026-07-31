@@ -1,11 +1,17 @@
 import requests
 import json
-import time
+import logging
+import threading
 from datetime import datetime, timezone
 
 # Part 4's central Database API, now an installed package rather than a
 # sibling directory, so the import can no longer fail.
 from common.db.database import Database
+
+# Logging rather than print: this module runs standalone *and* as a thread
+# inside `core/main.py serve`, where three components share one output stream
+# and the level prefix is what tells them apart.
+log = logging.getLogger("enricher")
 
 # Global cache dictionary to prevent API rate-limiting[cite: 1]
 IP_CACHE = {}
@@ -30,7 +36,7 @@ def calculate_dynamic_profile_score(ip_address, external_abuse_score, db=None, d
             session_count = inputs.get("session_count", 0)
             unique_commands = inputs.get("distinct_commands", 0)
     except Exception as e:
-        print(f"[WARNING] Could not retrieve local metrics for {ip_address}: {e}")
+        log.warning("could not retrieve local metrics for %s: %s", ip_address, e)
 
     # Calculate Score (Preserving original team weighting logic)[cite: 1]
     score = external_abuse_score if external_abuse_score is not None else 0
@@ -66,10 +72,10 @@ def get_threat_intel(ip_address, db=None, db_path=None):
         }
 
     if ip_address in IP_CACHE:
-        print(f"[CACHE HIT] Pulling profile for {ip_address} from memory.")
+        log.debug("cache hit — pulling profile for %s from memory", ip_address)
         return IP_CACHE[ip_address]
 
-    print(f"[API REQUEST] Fetching baseline threat intel for {ip_address}...")
+    log.info("fetching baseline threat intel for %s", ip_address)
     try:
         url = f"http://ip-api.com/json/{ip_address}?fields=status,country,city,lat,lon"
         response = requests.get(url, timeout=5)
@@ -102,7 +108,7 @@ def get_threat_intel(ip_address, db=None, db_path=None):
             return intel_record
 
     except Exception as e:
-        print(f"[ERROR] Threat intelligence lookup failed: {e}")
+        log.error("threat intelligence lookup failed for %s: %s", ip_address, e)
 
     # Fallback record utilizing NULL (None) for nullable fields as permitted in v1.3[cite: 3]
     return {
@@ -140,11 +146,11 @@ def save_reputation_to_db(intel_record, db=None, db_path=None):
                 profile_score=intel_record['profile_score'],
                 last_updated=intel_record['last_updated']
             )
-            print(f"✅ [V1.3 DB SUCCESS] Threat profile committed for IP: {intel_record['attacker_ip']}")
+            log.info("threat profile committed for %s", intel_record['attacker_ip'])
         else:
-            print("❌ [DB ERROR] Part 4 Database module not found.")
+            log.error("Part 4 Database module not found")
     except Exception as e:
-        print(f"❌ [DB ERROR] Out of sync with Baseline spec / Part 4 DB interface: {e}")
+        log.error("out of sync with Baseline spec / Part 4 DB interface: %s", e)
 
 def enrich_and_log_ip(ip_address, db=None, db_path=None):
     """
@@ -161,40 +167,63 @@ def enrich_and_log_ip(ip_address, db=None, db_path=None):
     save_reputation_to_db(profile, db=db, db_path=db_path)
     return profile
 
-def run_worker_loop(interval_seconds=30, max_age_days=7, db_path=None):
+def run_worker_loop(interval_seconds=30, max_age_days=7, db_path=None, db=None,
+                    stop_event=None):
     """
     Way 2 Execution: Runs continuously in the background, polling the database
     for un-enriched or stale attacker IPs and feeding them into our pipeline[cite: 5].
+
+    Two callers, one loop:
+
+    * standalone — `python enricher/enrich.py`, which opens its own connection;
+    * `core/main.py serve`, which passes its own `db` so the whole aggregator
+      shares one write lock, and a `stop_event` so Ctrl-C ends the loop
+      immediately instead of after the remaining sleep.
     """
-    print(f"🚀 [WAY 2 WORKER] Starting enrichment engine (interval: {interval_seconds}s)...")
-    
-    if Database is None:
-        print("❌ [ERROR] Part 4 Database module required for Way 2 worker loop.")
-        return
+    log.info("enrichment worker started (interval %ss)", interval_seconds)
 
-    # Connect to the central database[cite: 4]
-    db = Database(db_path) if db_path else Database()
+    # Connect to the central database, unless the caller already has a handle[cite: 4]
+    if db is None:
+        db = Database(db_path) if db_path else Database()
+    if stop_event is None:
+        stop_event = threading.Event()
 
-    while True:
+    while not stop_event.is_set():
         try:
             # Step 1: Ask Part 4's DB which IPs need enrichment[cite: 4, 5]
             pending_ips = db.get_ips_needing_enrichment(max_age_days=max_age_days, limit=50)
-            
+
             if pending_ips:
-                print(f"🔍 [WORKER] Found {len(pending_ips)} IP(s) needing enrichment...")
+                log.info("found %d IP(s) needing enrichment", len(pending_ips))
                 for ip in pending_ips:
+                    if stop_event.is_set():
+                        break
                     # Step 2: Feed each IP into our existing enrichment pipeline[cite: 1]
                     enrich_and_log_ip(ip, db=db, db_path=db_path)
             else:
-                print("💤 [WORKER] No new IPs to enrich. Sleeping...")
+                # Debug, not info: this fires every pass and would otherwise bury
+                # the collector's logs when the two share a process.
+                log.debug("no new IPs to enrich")
 
         except Exception as e:
-            print(f"[WORKER ERROR] Pass failed: {e}")
+            log.error("pass failed: %s", e)
 
         # Step 3: Wait for the specified interval before checking again[cite: 5]
-        time.sleep(interval_seconds)
+        stop_event.wait(interval_seconds)
+
+    log.info("enrichment worker stopped")
 
 # Executes Way 2 background loop when run directly from the terminal[cite: 5]
+# `main.py serve` runs this same loop in a thread; this entry point stays for
+# running the enricher on its own.
 if __name__ == "__main__":
-    # Runs continuously every 30 seconds as a background service[cite: 5]
-    run_worker_loop(interval_seconds=30)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s  %(levelname)-7s %(name)s: %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%SZ",
+    )
+    try:
+        # Runs continuously every 30 seconds as a background service[cite: 5]
+        run_worker_loop(interval_seconds=30)
+    except KeyboardInterrupt:
+        log.info("stopped")

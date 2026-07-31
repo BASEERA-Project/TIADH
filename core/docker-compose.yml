@@ -1,0 +1,23 @@
+services:
+  aggregator:
+    # collector + enricher + alert/export cycle, one process: main.py serve
+    build:
+      context: ..               # repo root, so the Dockerfile can COPY common/ and core/
+      dockerfile: core/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      # Shared database — this path is inside the named volume mounted below.
+      HONEYPOT_DB_PATH: /app/data/honeypot_aggregator.db
+      HONEYPOT_EXPORT_DIR: /app/data/exports
+      NODE_KEYS_JSON: '{"node-01":"dev-node-01-key","node-02":"dev-node-02-key","node-03":"dev-node-03-key"}'
+      MAX_BATCH_SIZE: "20"
+      MAINTENANCE_INTERVAL_SECONDS: "60"
+    volumes:
+      # Named volume holding the database and the exported feed files. The
+      # dashboard must mount this same volume if it also runs in Docker.
+      - tiadh_db:/app/data
+
+volumes:
+  tiadh_db:
+    external: true   # Create once with: docker volume create tiadh_db

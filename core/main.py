@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-main.py — Operational entry point for Part 4.
+main.py — Operational entry point for the aggregator host.
 
+    python main.py serve                     the whole aggregator, one process
     python main.py init                      create the schema
     python main.py seed                      load the demo fixture events
     python main.py ingest FILE.jsonl         load events from a file (or stdin)
@@ -12,9 +13,14 @@ main.py — Operational entry point for Part 4.
     python main.py stats                     print headline numbers
     python main.py validate FILE.jsonl       contract-check without writing
 
-`run` is the command to put on a timer in the final deployment. `seed`,
-`ingest` and `validate` exist so Part 4 can be developed and demonstrated with
-no dependency on Parts 1, 2 or 3 being live.
+`serve` is the command to run in the final deployment: it starts the collector,
+the enricher and the alert/export cycle as one process against one database
+handle. The dashboard stays separate — see `cmd_serve` for why.
+
+The single-purpose commands below it all still work on their own. `watch` is
+`serve` without the collector and the enricher, and `seed`, `ingest` and
+`validate` exist so Part 4 can be developed and demonstrated with no dependency
+on Parts 1, 2 or 3 being live.
 """
 
 from __future__ import annotations
@@ -23,12 +29,13 @@ import argparse
 import json
 import logging
 import sys
+import threading
 import time
 from pathlib import Path
 
 from common import config
 from common.alerting.alert_engine import AlertEngine
-from common.db.database import Database, load_jsonl
+from common.db.database import Database, load_jsonl, set_db
 from common.db.validation import rebase_events, validate_event
 from common.export.exporter import FeedExporter
 
@@ -135,27 +142,37 @@ def cmd_export(args, db: Database) -> int:
     return 0
 
 
-def cmd_run(args, db: Database) -> int:
-    """One maintenance cycle: housekeeping, then detection, then publication."""
-    offline = db.mark_stale_nodes_offline()
-    stale = db.close_stale_sessions()
-    summary = AlertEngine(db=db).run_once(window_minutes=args.window)
-    outputs = FeedExporter(db=db).export_all(min_severity=args.min_severity)
+def run_cycle(db: Database, window=None, min_severity=None, maintenance: bool = True) -> dict:
+    """
+    One maintenance cycle: housekeeping, then detection, then publication.
 
-    print(
-        json.dumps(
-            {
-                "nodes_marked_offline": offline,
-                "sessions_force_closed": stale,
-                "findings": summary["findings"],
-                "alerts_created": summary["alerts_created"],
-                "suppressed": summary["suppressed"],
-                "by_type": summary["by_type"],
-                "exports": outputs,
-            },
-            indent=2,
-        )
-    )
+    `maintenance` is False only when the collector is running in this same
+    process. Housekeeping belongs to whichever process is always on, and the
+    collector already runs `mark_stale_nodes_offline()` / `close_stale_sessions()`
+    on its own timer (collector/app/main.py) — doing it here as well would be
+    the same two sweeps twice.
+    """
+    offline = stale = 0
+    if maintenance:
+        offline = db.mark_stale_nodes_offline()
+        stale = db.close_stale_sessions()
+
+    summary = AlertEngine(db=db).run_once(window_minutes=window)
+    outputs = FeedExporter(db=db).export_all(min_severity=min_severity)
+
+    return {
+        "nodes_marked_offline": offline,
+        "sessions_force_closed": stale,
+        "findings": summary["findings"],
+        "alerts_created": summary["alerts_created"],
+        "suppressed": summary["suppressed"],
+        "by_type": summary["by_type"],
+        "exports": outputs,
+    }
+
+
+def cmd_run(args, db: Database) -> int:
+    print(json.dumps(run_cycle(db, args.window, args.min_severity), indent=2))
     return 0
 
 
@@ -171,6 +188,113 @@ def cmd_watch(args, db: Database) -> int:
             time.sleep(args.interval)
     except KeyboardInterrupt:
         log.info("stopped")
+    return 0
+
+
+def cmd_serve(args, db: Database) -> int:
+    """
+    Run the whole aggregator side of the system in one process.
+
+    Three components, one database handle:
+
+        collector   FastAPI on --host/--port, plus its own housekeeping timer
+        enricher    geolocation + profile scoring, every --enrich-interval
+        cycle       alerts + feed export, every --interval
+
+    They used to be three terminals because they started life as three
+    coursework parts, not because they need three processes: same uv project,
+    same environment, same HONEYPOT_DB_PATH, same write path. Sharing one
+    `Database` means sharing its write lock, so their writes queue in memory
+    instead of racing for SQLite's file lock and spending the busy timeout.
+
+    The dashboard is deliberately *not* here. It is a separate uv project with
+    its own environment (Flask, not FastAPI), it opens the database read-only,
+    and it makes its own decision about what to expose — the collector binds
+    0.0.0.0 because the sensors are remote, while the dashboard binds loopback
+    because it renders attacker data. It also has to run alone against a demo
+    database, and restarting a viewer should never interrupt ingestion. Run it
+    with `cd dashboard && uv run python main.py`.
+    """
+    import uvicorn  # local: no other command in this CLI needs a web server
+
+    log = logging.getLogger("serve")
+
+    # The collector and the enricher both reach for the process-wide handle.
+    # Hand them this one, so --db is honoured and all three share a write lock.
+    db.initialize_schema()
+    set_db(db)
+
+    # The collector is imported as `app.*` from inside collector/ (the same
+    # layout `uvicorn --app-dir collector` and pytest's `pythonpath` assume).
+    core_dir = Path(__file__).resolve().parent
+    for extra in (core_dir, core_dir / "collector"):
+        if str(extra) not in sys.path:
+            sys.path.insert(0, str(extra))
+    from app.main import app as collector_app
+
+    stop = threading.Event()
+    threads: list[threading.Thread] = []
+
+    def cycle_loop() -> None:
+        while not stop.is_set():
+            try:
+                result = run_cycle(db, args.window, args.min_severity, maintenance=False)
+                log.info(
+                    "cycle: %d finding(s), %d alert(s) created, %d suppressed",
+                    result["findings"],
+                    result["alerts_created"],
+                    result["suppressed"],
+                )
+            except Exception:  # noqa: BLE001 — never let one bad pass kill the loop
+                log.exception("cycle failed; continuing")
+            stop.wait(args.interval)
+
+    threads.append(threading.Thread(target=cycle_loop, name="cycle", daemon=True))
+
+    if args.no_enricher:
+        log.info("enricher disabled (--no-enricher)")
+    else:
+        from enricher.enrich import run_worker_loop
+
+        threads.append(
+            threading.Thread(
+                target=run_worker_loop,
+                kwargs={
+                    "interval_seconds": args.enrich_interval,
+                    "db": db,
+                    "stop_event": stop,
+                },
+                name="enricher",
+                daemon=True,
+            )
+        )
+
+    for thread in threads:
+        thread.start()
+
+    log.info("database %s", db.path)
+    log.info("alert/export cycle every %ss (housekeeping is the collector's)", args.interval)
+    log.info("dashboard is a separate command: cd dashboard && uv run python main.py")
+
+    # log_config=None keeps uvicorn from installing its own handlers, so its
+    # logs and ours come out of one root logger in one format.
+    server = uvicorn.Server(
+        uvicorn.Config(collector_app, host=args.host, port=args.port, log_config=None)
+    )
+    try:
+        # Blocks until SIGINT/SIGTERM; uvicorn owns the signal handlers because
+        # this is the main thread.
+        server.run()
+    except KeyboardInterrupt:
+        # uvicorn shuts the server down gracefully and *then* re-raises. The
+        # worker threads below still have to be stopped, and a traceback on
+        # Ctrl-C helps nobody.
+        pass
+    finally:
+        stop.set()
+        for thread in threads:
+            thread.join(timeout=5)
+        log.info("aggregator stopped")
     return 0
 
 
@@ -223,8 +347,8 @@ def cmd_validate(args, db: Database) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="part4",
-        description="Storage, alerting and feed export for the honeypot TI aggregator.",
+        prog="core",
+        description="Aggregator-host entry point: ingest, enrichment, alerting and feed export.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -232,6 +356,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
 
     subs = parser.add_subparsers(dest="command", required=True)
+
+    p_serve = subs.add_parser(
+        "serve",
+        help="the whole aggregator in one process: collector + enricher + alert/export cycle",
+    )
+    # 0.0.0.0 by default because the sensors are on other hosts. This is the
+    # opposite of the dashboard's default, and deliberately so.
+    p_serve.add_argument("--host", default="0.0.0.0", help="collector bind address")
+    p_serve.add_argument("--port", type=int, default=8000, help="collector port")
+    p_serve.add_argument("--interval", type=int, default=30,
+                         help="seconds between alert/export cycles")
+    p_serve.add_argument("--enrich-interval", type=int, default=30,
+                         help="seconds between enrichment passes")
+    p_serve.add_argument("--no-enricher", action="store_true",
+                         help="skip the enricher (it calls ip-api.com — use offline)")
+    p_serve.add_argument("--window", type=int, help="alert lookback in minutes")
+    p_serve.add_argument("--min-severity", choices=["low", "medium", "high"])
+    p_serve.set_defaults(func=cmd_serve)
 
     subs.add_parser("init", help="create tables, indexes and views").set_defaults(func=cmd_init)
 
@@ -280,9 +422,18 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     setup_logging(args.verbose)
 
+    # common.config folded these into os.environ on import. Say which, because
+    # "is my .env actually live?" is the first question when a setting looks
+    # ignored.
+    if config.ENV_FILES_LOADED:
+        logging.getLogger("config").info(
+            "loaded %s", ", ".join(str(p) for p in config.ENV_FILES_LOADED)
+        )
+
     db = Database(path=args.db) if args.db else Database()
     try:
-        if args.command not in ("init", "seed") and not db.path.exists():
+        # `serve` creates the schema itself, the same way the collector does.
+        if args.command not in ("init", "seed", "serve") and not db.path.exists():
             print(
                 f"No database at {db.path}. Run 'python main.py init' first.",
                 file=sys.stderr,
