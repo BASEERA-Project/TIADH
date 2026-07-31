@@ -26,57 +26,6 @@ override it anywhere with `HONEYPOT_DB_PATH`.
 | **Nodes** | Sensor health in missed heartbeats — amber past 2, red past 5 — plus events shipped and measured ingest lag. |
 | **Feeds** | A UI over `core/export/exporter.py`. Pick a window and filters, preview the records, download JSON, CSV or STIX from a stable URL. |
 
-## How it talks to the database
-
-**The dashboard writes no SQL and does not import `sqlite3`.** Every read is a
-method on `common.db.database.Database`, opened `read_only=True` and scoped to
-one request (`app/db.py`). Table names, column names, `json_extract` and
-SQLite's date functions all stop at that file — rename a column there and
-nothing here has to change, because there is no second copy of the schema in a
-view function or a template.
-
-The screens are served by the storage layer's dashboard API:
-
-| Need | Call |
-|---|---|
-| Overview tiles | `get_dashboard_overview(window_hours=…)` |
-| Charts | `get_event_activity`, `get_event_type_counts`, `get_top_commands`, `get_top_countries` |
-| Attackers table | `search_attackers(filters, sort, limit, offset)` |
-| Attacker profile | `get_attacker`, `get_attacker_sessions`, `get_attacker_commands`, `get_attacker_usernames`, `get_attacker_nodes`, `get_attacker_events`, `get_attacker_activity`, `get_alerts_for_ip` |
-| Sessions | `search_sessions`, `get_session`, `get_session_events`, `get_alerts_for_session` |
-| Alerts | `search_alerts`, `get_alert_status_counts`, `get_alert_severity_counts`, `get_alert_type_stats` |
-| Nodes | `get_node_statistics`, `get_node_activity` |
-| Filter dropdowns | `get_countries`, `get_protocols`, `get_alert_types`, `get_node_ids` |
-| Readiness | `exists`, `describe` |
-
-Sort keys are whitelisted inside `Database` (`ATTACKER_SORT_KEYS`,
-`SESSION_SORT_KEYS`, `ALERT_SORT_KEYS`). The dashboard passes a key like
-`"score"`; it cannot supply an `ORDER BY`, and an unknown key falls back to the
-default so a stale bookmark still renders.
-
-`app/queries.py` is what is left over once the SQL is gone — window tokens to
-timestamps, page numbers to limit/offset, gap-filling for charts, and the
-amber/red heartbeat verdict. Those are the dashboard's business, not the
-storage layer's.
-
-The one write is acknowledging or closing an alert. It uses a separate writable
-handle and calls `Database.set_alert_status()`; set
-`DASHBOARD_ALLOW_ALERT_ACTIONS=0` and the buttons disappear.
-
-### Credentials
-
-Attempted passwords never reach this process:
-
-* session listings read the `sessions_public` view, not `sessions`;
-* `get_session_events()` selects `json_extract(details,'$.password') IS NOT NULL`
-  — a boolean — so `***MASKED***` is rendered from the fact that a password was
-  submitted, not from a value the template is trusted to hide. That guarantee now
-  lives in the storage layer, where no caller can opt out of it;
-* the per-IP export runs through the exporter's `scrub()` and
-  `assert_no_secrets()`, which raise rather than redact.
-
-Aggregate username statistics are shown; aggregate password statistics are not.
-
 ## Configuration
 
 Every setting is an environment variable (`app/settings.py`):
