@@ -79,7 +79,7 @@ Flask's server is fine for a demo. For anything left running:
 
 ```bash
 uv sync --extra serve
-uv run waitress-serve --host 127.0.0.1 --port 8050 wsgi:app
+uv run waitress-serve --call --host 127.0.0.1 --port 8050 app:create_app
 ```
 
 Threaded workers are safe — each request gets its own read-only handle and
@@ -89,7 +89,6 @@ releases it on teardown.
 
 ```
 main.py             CLI entry point
-wsgi.py             entry point for waitress/gunicorn
 app/
   __init__.py       application factory, CSRF, security headers, nav
   settings.py       environment-driven configuration
