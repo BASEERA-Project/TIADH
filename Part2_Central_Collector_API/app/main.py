@@ -3,12 +3,12 @@ main.py — FastAPI collector for Part 2.
 
 This is the HTTP entry point that honeypot nodes talk to. On every request
 it validates the event batch against Baseline v1.3, then hands the raw events
-to the Part 4 Database via app/database.py.
+to the shared Database in `common` via app/database.py.
 
 Background maintenance
 ----------------------
-Part 4's database.py docstring explicitly assigns two housekeeping tasks to
-Part 2 (the only always-running service):
+The storage contract (common/db/database.py) explicitly assigns two
+housekeeping tasks to Part 2 (the only always-running service):
 
     mark_stale_nodes_offline()  — flip nodes offline after missed heartbeats
     close_stale_sessions()      — force-close abandoned sessions

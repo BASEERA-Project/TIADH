@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Database unavailable · TIADH</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/soc.css') }}">
+</head>
+<body>
+  <div class="setup">
+    <h1>The dashboard cannot read the database</h1>
+    <p class="dim" style="margin-top: 0">{{ error }}</p>
+
+    <dl class="kv" style="margin: 18px 0">
+      <dt>Looked for</dt><dd class="mono">{{ health.path }}</dd>
+      <dt>File exists</dt><dd class="mono">{{ 'yes' if health.exists else 'no' }}</dd>
+      <dt>Readable</dt><dd class="mono">{{ 'yes' if health.readable else 'no' }}</dd>
+      <dt>Schema version</dt>
+      <dd class="mono">
+        {{ health.schema_version if health.schema_version is not none else '—' }}
+        (expected {{ health.expected_schema_version }})
+      </dd>
+    </dl>
+
+    <p>Create the schema, then load some data:</p>
+    <pre>cd core
+python main.py init
+python main.py seed</pre>
+
+    <p style="margin-top: 18px">
+      Or point the dashboard somewhere else — it reads <span class="mono">HONEYPOT_DB_PATH</span>, the same
+      variable the collector and the alert engine use:
+    </p>
+    <pre>set HONEYPOT_DB_PATH=C:\path\to\honeypot_aggregator.db
+python main.py</pre>
+
+    <p style="margin-top: 18px">
+      To generate a realistic dataset without running the sensors, use the demo seeder — it writes to its own
+      database file and never touches the shared one:
+    </p>
+    <pre>cd dashboard
+python tools/seed_demo.py</pre>
+
+    <p class="tiny dim" style="margin-top: 22px">
+      This page is served whenever the read-only handle cannot be opened. It is not an error state in the
+      pipeline — the collector, enricher and alert engine are unaffected by it.
+    </p>
+  </div>
+</body>
+</html>

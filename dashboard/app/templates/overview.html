@@ -1,0 +1,272 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+
+{#  Overview — every figure on this page is a link into the screen that explains
+    it. A tile that says "412 unique IPs" is a question; clicking it answers the
+    question with the 412 rows themselves.  #}
+
+{% block crumb %}<div class="crumb">Fleet posture · last {{ activity_hours }}h</div>{% endblock %}
+
+{% block content %}
+
+<div class="tiles">
+  {{ ui.tile('Attack events, ' ~ activity_hours ~ 'h',
+             stats.attacks_in_window | compact,
+             url_for('sessions.index', window='24h'),
+             (stats.events_last_hour | number) ~ ' in the last hour',
+             stat='attacks_in_window') }}
+
+  {{ ui.tile('Unique attacker IPs',
+             stats.unique_attackers | compact,
+             url_for('attackers.index'),
+             (stats.enriched_ips | number) ~ ' enriched',
+             stat='unique_attackers') }}
+
+  {{ ui.tile('Sessions',
+             stats.total_sessions | compact,
+             url_for('sessions.index'),
+             (stats.sessions_in_window | number) ~ ' started in ' ~ activity_hours ~ 'h',
+             stat='total_sessions') }}
+
+  {{ ui.tile('Active sessions',
+             stats.active_sessions | compact,
+             url_for('sessions.index', status='active'),
+             'live right now',
+             tone='is-good' if stats.active_sessions else '',
+             stat='active_sessions') }}
+
+  {{ ui.tile('Open alerts',
+             stats.open_alerts | compact,
+             url_for('alerts.index', status='open'),
+             (stats.alerts_in_window | number) ~ ' raised in ' ~ activity_hours ~ 'h',
+             tone='is-warn' if stats.open_alerts else '',
+             stat='open_alerts') }}
+
+  {{ ui.tile('High severity, open',
+             stats.open_high_alerts | compact,
+             url_for('alerts.index', status='open', severity='high'),
+             'needs a decision',
+             tone='is-crit' if stats.open_high_alerts else '',
+             stat='open_high_alerts') }}
+
+  {{ ui.tile('Sensors online',
+             (stats.nodes_online | number) ~ '/' ~ (stats.nodes_total | number),
+             url_for('nodes.index'),
+             'all reporting' if not stats.nodes_stale
+                             else (stats.nodes_stale | number) ~ ' not reporting',
+             tone='is-crit' if stats.nodes_stale else 'is-good') }}
+
+  {{ ui.tile('Ingest lag',
+             (stats.avg_ingest_lag_seconds | round(1)) ~ 's',
+             url_for('nodes.index'),
+             'node clock to collector, mean of last 500') }}
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h2>Event volume</h2>
+    <span class="sub">hourly, last {{ activity_hours }} hours, all event types</span>
+    <div class="actions">
+      <span class="legend"><span><i style="background: var(--accent)"></i> events</span></span>
+    </div>
+  </div>
+  <div class="panel-body">
+    {% if activity_peak %}
+      {{ ui.colchart(activity, activity_peak) }}
+    {% else %}
+      {{ ui.empty('No events in this window', 'The collector has not accepted anything in the last ' ~ activity_hours ~ ' hours.') }}
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid-2" style="margin-top: 14px">
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Top attackers</h2>
+      <span class="sub">by event volume</span>
+      <div class="actions"><a class="btn btn-sm" href="{{ url_for('attackers.index') }}">All attackers</a></div>
+    </div>
+    {% if top_attackers %}
+      <div class="table-wrap">
+        <table class="grid">
+          <thead>
+            <tr>
+              <th>IP</th><th>Country</th>
+              <th class="num">Events</th><th class="num">Sessions</th>
+              <th class="num">Nodes</th><th class="num">Score</th><th>Last seen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in top_attackers %}
+              {% set risk = [row.abuse_score or 0, row.profile_score or 0] | max %}
+              <tr class="{% if risk >= thresholds.HIGH_RISK_SCORE_THRESHOLD %}is-high{% endif %}">
+                <td>{{ ui.ip(row.attacker_ip) }}</td>
+                <td class="truncate">{{ row.country or DASH }}</td>
+                <td class="num">{{ row.event_count | number }}</td>
+                <td class="num">{{ row.session_count | number }}</td>
+                <td class="num">{{ row.node_count | number }}</td>
+                <td class="num">{{ ui.score(risk, 'abuse ' ~ (row.abuse_score if row.abuse_score is not none else '—') ~ ' · profile ' ~ (row.profile_score if row.profile_score is not none else '—')) }}</td>
+                <td>{{ ui.age(row.last_seen) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {{ ui.empty('No attacker activity recorded') }}
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Open alerts</h2>
+      <span class="sub">
+        {{ severity.high }} high · {{ severity.medium }} medium · {{ severity.low }} low
+      </span>
+      <div class="actions"><a class="btn btn-sm" href="{{ url_for('alerts.index', status='open') }}">All alerts</a></div>
+    </div>
+    {% set total_open = severity.high + severity.medium + severity.low %}
+    {% if total_open %}
+      <div class="panel-body tight" style="padding-top: 12px; padding-bottom: 10px">
+        <div class="splitbar">
+          <i class="high" style="width: {{ percent(severity.high, total_open) }}%"></i>
+          <i class="medium" style="width: {{ percent(severity.medium, total_open) }}%"></i>
+          <i class="low" style="width: {{ percent(severity.low, total_open) }}%"></i>
+        </div>
+      </div>
+    {% endif %}
+    {% if recent_alerts %}
+      <div class="table-wrap">
+        <table class="grid">
+          <thead>
+            <tr><th>Severity</th><th>Rule</th><th>Source</th><th>Raised</th></tr>
+          </thead>
+          <tbody>
+            {% for alert in recent_alerts %}
+              <tr class="{% if alert.severity == 'high' %}is-high{% elif alert.severity == 'medium' %}is-medium{% endif %}">
+                <td>{{ ui.sev(alert.severity) }}</td>
+                <td>
+                  <a href="{{ url_for('alerts.index', type=alert.alert_type) }}">{{ alert.alert_type }}</a>
+                  <div class="tiny dim truncate" style="max-width: 340px">{{ alert.description }}</div>
+                </td>
+                <td>{{ ui.ip(alert.attacker_ip) }}</td>
+                <td>{{ ui.age(alert.timestamp) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {{ ui.empty('No open alerts', 'Either nothing crossed a threshold, or the alert engine has not run.') }}
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid-3" style="margin-top: 14px">
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Most-tried usernames</h2>
+      <span class="sub">usernames only</span>
+    </div>
+    <div class="panel-body">
+      {% if top_credentials %}
+        {% set peak = top_credentials | map(attribute='attempts') | max %}
+        <div class="barlist">
+          {% for row in top_credentials %}
+            {{ ui.barrow(row.username, row.attempts, peak, '',
+                         url_for('sessions.index', q=row.username),
+                         row.distinct_ips ~ ' distinct IPs') }}
+          {% endfor %}
+        </div>
+        <div class="tiny dim" style="margin-top: 10px">
+          Attempted passwords are retained locally and never aggregated here.
+        </div>
+      {% else %}
+        {{ ui.empty('No login attempts recorded') }}
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Most-run commands</h2>
+      <span class="sub">last 24 hours</span>
+    </div>
+    <div class="panel-body">
+      {% if top_commands %}
+        {% set peak = top_commands | map(attribute='attempts') | max %}
+        <div class="barlist">
+          {% for row in top_commands %}
+            {{ ui.barrow(row.command | truncate_middle(34), row.attempts, peak, '', '',
+                         row.command ~ '&#10;' ~ row.distinct_ips ~ ' distinct IPs') }}
+          {% endfor %}
+        </div>
+      {% else %}
+        {{ ui.empty('No commands executed', 'No attacker has reached a shell in this window.') }}
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Source countries</h2>
+      <span class="sub">by event volume</span>
+    </div>
+    <div class="panel-body">
+      {% if top_countries %}
+        {% set peak = top_countries | map(attribute='events') | max %}
+        <div class="barlist">
+          {% for row in top_countries %}
+            {{ ui.barrow(row.country, row.events, peak, '',
+                         url_for('attackers.index', country=row.country),
+                         row.ips ~ ' distinct IPs') }}
+          {% endfor %}
+        </div>
+      {% else %}
+        {{ ui.empty('No geolocation yet', 'Enrichment has not written any reputation rows.') }}
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="panel" style="margin-top: 14px">
+  <div class="panel-head">
+    <h2>Sensors</h2>
+    <span class="sub">heartbeat every {{ heartbeat_interval }}s by contract</span>
+    <div class="actions"><a class="btn btn-sm" href="{{ url_for('nodes.index') }}">Node detail</a></div>
+  </div>
+  {% if nodes %}
+    <div class="table-wrap">
+      <table class="grid">
+        <thead>
+          <tr>
+            <th>Node</th><th>Health</th><th>Last contact</th>
+            <th class="num">Missed beats</th><th class="num">Events, 24h</th>
+            <th class="num">Events, total</th><th>Location</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for node in nodes %}
+            <tr class="{% if node.health == 'critical' %}is-high{% elif node.health == 'warning' %}is-medium{% endif %}">
+              <td class="mono strong">{{ node.node_id }}</td>
+              <td>{{ ui.health(node.health) }}</td>
+              <td>{{ ui.age(node.last_contact) }}</td>
+              <td class="num {% if not node.missed_heartbeats %}zero{% endif %}">
+                {{ node.missed_heartbeats if node.missed_heartbeats is not none else DASH }}
+              </td>
+              <td class="num">{{ node.events_24h | number }}</td>
+              <td class="num">{{ node.events_total | number }}</td>
+              <td class="dim">{{ node.location or node.hostname or DASH }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    {{ ui.empty('No sensors registered', 'Nodes appear here as soon as the collector accepts their first event.') }}
+  {% endif %}
+</div>
+
+{% endblock %}

@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+
+{% block crumb %}<div class="crumb">Rule hits, and the rules that produced them</div>{% endblock %}
+
+{% block content %}
+
+<div class="tiles">
+  {{ ui.tile('Open', status_counts.open | number, url_for('alerts.index', status='open'),
+             'awaiting triage', tone='is-warn' if status_counts.open else '') }}
+  {{ ui.tile('High severity, open', severity_counts.high | number,
+             url_for('alerts.index', status='open', severity='high'),
+             'act on these first', tone='is-crit' if severity_counts.high else '') }}
+  {{ ui.tile('Acknowledged', status_counts.acknowledged | number,
+             url_for('alerts.index', status='acknowledged'), 'seen, not yet closed') }}
+  {{ ui.tile('Closed', status_counts.closed | number,
+             url_for('alerts.index', status='closed'), 'resolved') }}
+  {{ ui.tile('Rules enabled', thresholds.ENABLED_RULES | length,
+             '#rules', 'of ' ~ (rules | length) ~ ' implemented') }}
+  {{ ui.tile('Evaluation window', thresholds.ALERT_WINDOW_MINUTES ~ ' min', '#rules',
+             'suppression ' ~ thresholds.ALERT_COOLDOWN_MINUTES ~ ' min') }}
+</div>
+
+<form class="filters" method="get" data-autosubmit>
+  <label class="field grow">
+    <span>Search</span>
+    <input type="search" name="q" value="{{ filters.q or '' }}" data-search
+           placeholder="IP, rule or description  —  press /" autocomplete="off">
+  </label>
+
+  <label class="field">
+    <span>Status</span>
+    <select name="status">
+      <option value="">any</option>
+      {% for value in statuses %}
+        <option value="{{ value }}" {% if filters.status == value %}selected{% endif %}>{{ value }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="field">
+    <span>Severity</span>
+    <select name="severity">
+      <option value="">any</option>
+      {% for value in severities %}
+        <option value="{{ value }}" {% if filters.severity == value %}selected{% endif %}>{{ value }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="field">
+    <span>Rule</span>
+    <select name="type">
+      <option value="">any</option>
+      {% for value in alert_types %}
+        <option value="{{ value }}" {% if filters.type == value %}selected{% endif %}>{{ value }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="field">
+    <span>Raised</span>
+    <select name="window">
+      {% for value, label in windows %}
+        <option value="{{ value }}" {% if (filters.window or 'all') == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <div class="spacer"></div>
+  <button class="btn btn-primary" type="submit">Apply</button>
+  {% if filter_count %}
+    <a class="btn" href="{{ url_for('alerts.index') }}">Clear {{ filter_count }}</a>
+  {% endif %}
+</form>
+
+{% if filters.ip %}
+  <div style="margin-bottom: 14px">
+    {{ ui.note('Filtered to alerts for ' ~ filters.ip ~ '.') }}
+  </div>
+{% endif %}
+
+<div class="panel">
+  <div class="panel-head">
+    <h2>Alerts</h2>
+    <span class="sub">{{ page.total | number }} matching</span>
+  </div>
+
+  {% if page.rows %}
+    <div class="table-wrap">
+      <table class="grid">
+        <thead>
+          <tr>
+            {{ ui.sort_th('Severity', 'severity', filters.sort) }}
+            {{ ui.sort_th('Rule', 'type', filters.sort) }}
+            <th>Description</th>
+            {{ ui.sort_th('Source IP', 'ip', filters.sort) }}
+            <th>Country</th>
+            <th>Session</th>
+            {{ ui.sort_th('Status', 'status', filters.sort) }}
+            {{ ui.sort_th('Raised', 'timestamp', filters.sort) }}
+            {% if allow_alert_actions %}<th></th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for alert in page.rows %}
+            <tr class="{% if alert.severity == 'high' %}is-high{% elif alert.severity == 'medium' %}is-medium{% endif %}">
+              <td>{{ ui.sev(alert.severity) }}</td>
+              <td class="mono nowrap">
+                <a href="{{ url_with(type=alert.alert_type, page=none) }}">{{ alert.alert_type }}</a>
+              </td>
+              <td class="truncate" style="max-width: 480px" data-tip="{{ alert.description }}">
+                {{ alert.description }}
+              </td>
+              <td>{{ ui.ip(alert.attacker_ip) }}</td>
+              <td class="dim truncate" style="max-width: 110px">{{ alert.country or DASH }}</td>
+              <td>
+                {% if alert.session_id %}
+                  <a class="mono" href="{{ url_for('sessions.detail', session_id=alert.session_id) }}">
+                    {{ alert.session_id | truncate_middle(22) }}</a>
+                {% else %}<span class="dim">{{ DASH }}</span>{% endif %}
+              </td>
+              <td>{{ ui.state(alert.status) }}</td>
+              <td>{{ ui.ts(alert.timestamp) }}</td>
+              {% if allow_alert_actions %}
+                <td class="nowrap right">
+                  {% if alert.status == 'open' %}
+                    <form class="inline-form" method="post"
+                          action="{{ url_for('alerts.set_status', alert_id=alert.alert_id) }}">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <input type="hidden" name="status" value="acknowledged">
+                      <input type="hidden" name="next" value="{{ request.full_path }}">
+                      <button class="btn btn-sm" type="submit">Ack</button>
+                    </form>
+                  {% endif %}
+                  {% if alert.status != 'closed' %}
+                    <form class="inline-form" method="post"
+                          action="{{ url_for('alerts.set_status', alert_id=alert.alert_id) }}">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <input type="hidden" name="status" value="closed">
+                      <input type="hidden" name="next" value="{{ request.full_path }}">
+                      <button class="btn btn-sm" type="submit">Close</button>
+                    </form>
+                  {% else %}
+                    <form class="inline-form" method="post"
+                          action="{{ url_for('alerts.set_status', alert_id=alert.alert_id) }}">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <input type="hidden" name="status" value="open">
+                      <input type="hidden" name="next" value="{{ request.full_path }}">
+                      <button class="btn btn-sm" type="submit">Reopen</button>
+                    </form>
+                  {% endif %}
+                </td>
+              {% endif %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.pager(page, 'alerts') }}
+  {% else %}
+    {{ ui.empty('No alerts match these filters',
+                'The engine writes an alert only when a rule below crosses its threshold.') }}
+  {% endif %}
+</div>
+
+<div class="panel" id="rules" style="margin-top: 14px">
+  <div class="panel-head">
+    <h2>Detection rules</h2>
+    <span class="sub">values read live from the engine configuration</span>
+    <div class="actions">
+      {% for setting in engine_settings %}
+        <span class="threshold" data-tip="{{ setting.env }}">
+          <span class="k">{{ setting.label }}</span><span class="v">{{ setting.value }}</span>
+        </span>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="rules">
+    {% for rule in rules %}
+      {% set stat = rule_stats.get(rule.key) %}
+      <div class="rule{% if not rule.enabled %} is-disabled{% endif %}">
+        <div>
+          <h4>
+            {{ rule.title }}
+            <span class="tag">{{ rule.key }}</span>
+            {% if not rule.enabled %}<span class="chip">disabled</span>{% endif %}
+          </h4>
+          <div class="what">Fires when {{ rule.fires_when }}.</div>
+          <div class="meta">
+            Severity: {{ rule.severity }} · Deduplication: {{ rule.dedupe }}
+            {%- if rule.note %} · {{ rule.note }}{% endif %}
+          </div>
+          <div class="thresholds">
+            {% for threshold in rule.thresholds %}
+              <span class="threshold" data-tip="{{ threshold.env }}">
+                <span class="k">{{ threshold.label }}</span>
+                <span class="v">{{ threshold.value }}</span>
+              </span>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="counts">
+          <div class="n {% if not stat %}zero{% endif %}">{{ stat.total if stat else 0 }}</div>
+          <div class="lbl">raised</div>
+          {% if stat and stat.open_count %}
+            <div style="margin-top: 6px">
+              <a class="chip state-open" href="{{ url_for('alerts.index', type=rule.key, status='open') }}">
+                {{ stat.open_count }} open
+              </a>
+            </div>
+          {% endif %}
+          {% if stat and stat.last_fired %}
+            <div class="tiny dim" style="margin-top: 5px">{{ stat.last_fired | relative }}</div>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  {% if patterns.high or patterns.medium or patterns.low %}
+    <details class="patterns">
+      <summary>
+        High-risk command patterns
+        ({{ patterns.high | length }} high, {{ patterns.medium | length }} medium,
+        {{ patterns.low | length }} low) — matched in order, first match wins
+      </summary>
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>Severity</th><th>What it catches</th><th>Pattern</th></tr></thead>
+          <tbody>
+            {% for severity in ['high', 'medium', 'low'] %}
+              {% for entry in patterns.get(severity, []) %}
+                <tr>
+                  <td>{{ ui.sev(entry.severity) }}</td>
+                  <td>{{ entry.label }}</td>
+                  <td class="mono dim">{{ entry.pattern }}</td>
+                </tr>
+              {% endfor %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  {% endif %}
+
+  <div class="panel-foot">
+    Thresholds come from <span class="mono">common/config.py</span> and any environment override in
+    effect; the dashboard reads them at render time rather than keeping a copy.
+  </div>
+</div>
+
+{% endblock %}

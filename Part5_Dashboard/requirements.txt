@@ -1,4 +1,0 @@
-pip==23.2.1
-plotly==6.9.0
-SQLAlchemy==2.0.51
-streamlit==1.59.2

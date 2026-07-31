@@ -1,25 +1,19 @@
 FROM python:3.12-slim
 WORKDIR /app
 
-# Install Part 2 dependencies
-COPY requirements.txt .
+# The build context is the repository root (see docker-compose.yml) so that the
+# shared `common` package can be installed alongside the collector. The layout
+# is preserved inside the image, which is what makes the `-e ../common` line in
+# requirements.txt resolve here exactly as it does in a local checkout.
+COPY common ./common
+COPY Part2_Central_Collector_API ./Part2_Central_Collector_API
+
+WORKDIR /app/Part2_Central_Collector_API
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy Part 2 application
-COPY app ./app
-
-# Copy Part 4 so Part 2 can import its Database class at runtime.
-# In a shared-volume deployment you can remove this COPY and set
-# PART4_PATH to the mounted path instead.
-COPY ../part4_storage_alerting ./part4_storage_alerting
-
-# Install Part 4 dependencies (needed for its Database class)
-RUN pip install --no-cache-dir -r ./part4_storage_alerting/requirements.txt
-
-# HONEYPOT_DB_PATH is the shared database. Override this at runtime to
-# point at the same file used by Parts 3, 4 and 5.
+# HONEYPOT_DB_PATH is the shared database. Override this at runtime to point at
+# the same file the enricher, the alert engine and the dashboard use.
 ENV HONEYPOT_DB_PATH=/app/data/honeypot_aggregator.db
-ENV PART4_PATH=/app/part4_storage_alerting
 
 RUN mkdir -p /app/data
 EXPOSE 8000

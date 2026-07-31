@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+
+{% set heading = session.session_id %}
+
+{#  The transcript.
+
+    Every password renders as ***MASKED*** because the query behind this page
+    selected a boolean — "was a password submitted?" — and never selected the
+    password itself. The masking is a property of the data that reached the
+    template, not a formatting choice the template is trusted to remember.  #}
+
+{% block crumb %}
+  <div class="crumb"><a href="{{ url_for('sessions.index') }}">Sessions</a> · transcript</div>
+{% endblock %}
+
+{% block content %}
+
+<div class="panel">
+  <div class="panel-head">
+    <h2 class="mono" style="font-size: 14px">{{ session.session_id }}</h2>
+    {{ ui.copy(session.session_id) }}
+    {{ ui.state(session.status) }}
+    {% if counts.successes %}<span class="chip sev-high"><span class="pip"></span>compromised</span>{% endif %}
+    <div class="actions">
+      {% if neighbours.count > 1 %}
+        <span class="tiny dim">{{ neighbours.index }} of {{ neighbours.count }} from this IP</span>
+        {% if neighbours.prev %}
+          <a class="btn btn-sm" href="{{ url_for('sessions.detail', session_id=neighbours.prev) }}">← newer</a>
+        {% endif %}
+        {% if neighbours.next %}
+          <a class="btn btn-sm" href="{{ url_for('sessions.detail', session_id=neighbours.next) }}">older →</a>
+        {% endif %}
+      {% endif %}
+      <a class="btn btn-sm" href="{{ url_for('attackers.profile', ip=session.attacker_ip) }}">Attacker profile</a>
+    </div>
+  </div>
+
+  <div class="panel-body">
+    <div class="facts">
+      <div><div class="k">Attacker</div><div class="v sm">{{ ui.ip(session.attacker_ip) }}</div></div>
+      <div><div class="k">Sensor</div><div class="v sm">{{ session.node_id }}</div></div>
+      <div><div class="k">Protocol</div><div class="v sm">{{ session.protocol or DASH }}</div></div>
+      <div><div class="k">Country</div><div class="v sm">{{ session.country or DASH }}</div></div>
+      <div><div class="k">Duration</div><div class="v sm">{{ session.duration_seconds | duration }}</div></div>
+      <div>
+        <div class="k">Failed logins</div>
+        <div class="v" {% if counts.failed_logins %}style="color: var(--warn)"{% endif %}>{{ counts.failed_logins }}</div>
+      </div>
+      <div>
+        <div class="k">Accepted</div>
+        <div class="v" {% if counts.successes %}style="color: var(--crit)"{% endif %}>{{ counts.successes }}</div>
+      </div>
+      <div><div class="k">Commands</div><div class="v">{{ counts.commands }}</div></div>
+      <div>
+        <div class="k">Flagged</div>
+        <div class="v" {% if risky_count %}style="color: var(--crit)"{% endif %}>{{ risky_count }}</div>
+      </div>
+      <div><div class="k">Downloads</div><div class="v">{{ counts.downloads }}</div></div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 14px" class="transcript">
+  <div class="transcript-head">
+    <span class="dots"><i></i><i></i><i></i></span>
+    <span>{{ session.protocol or 'session' }}://{{ session.attacker_ip }} → {{ session.node_id }}</span>
+    <span style="margin-left: auto">{{ lines | length }} events · times are UTC</span>
+  </div>
+
+  <div class="transcript-body">
+    {% for line in lines %}
+
+      {% if line.gap_seconds %}
+        <div class="transcript-rule">
+          <span></span><span></span>
+          <span class="body">{{ line.gap_seconds | duration }} later</span>
+        </div>
+      {% endif %}
+
+      <div class="tline {{ line.kind }}{% if line.risk and line.risk.severity == 'high' %} risk-high{% endif %}">
+        <span class="tstamp">{{ line.timestamp | time_part }}</span>
+
+        {% if line.kind == 'connect' %}
+          <span class="gutter">~</span>
+          <span class="body">
+            connection from {{ line.attacker_ip }}{% if line.source_port %}:{{ line.source_port }}{% endif %}
+            {%- if line.destination_ip %} to {{ line.destination_ip }}{% if line.destination_port %}:{{ line.destination_port }}{% endif %}{% endif %}
+            via {{ line.protocol or 'unknown' }}
+          </span>
+
+        {% elif line.kind == 'auth-fail' %}
+          <span class="gutter">✗</span>
+          <span class="body">
+            login failed — user <span class="user">{{ line.username or '(none)' }}</span>
+            {%- if line.had_password %} password <span class="masked">***MASKED***</span>{% endif %}
+          </span>
+
+        {% elif line.kind == 'auth-ok' %}
+          <span class="gutter">✓</span>
+          <span class="body">
+            LOGIN ACCEPTED — user <span class="user">{{ line.username or '(unknown)' }}</span>
+            {%- if line.had_password %} password <span class="masked">***MASKED***</span>{% endif %}
+          </span>
+
+        {% elif line.kind == 'command' %}
+          <span class="gutter">$</span>
+          <span class="body">
+            {{ line.command }}
+            {%- if line.risk %}<span class="verdict {{ line.risk.severity }}">{{ line.risk.label }}</span>{% endif %}
+          </span>
+
+        {% elif line.kind == 'download' %}
+          <span class="gutter">⇩</span>
+          <span class="body">
+            payload fetched{% if line.file_name %} — {{ line.file_name }}{% endif %}
+            {%- if line.download_url %} from {{ line.download_url }}{% endif %}
+            {%- if line.file_hash %} (sha256 {{ line.file_hash | truncate_middle(24) }}){% endif %}
+          </span>
+
+        {% elif line.kind in ('end', 'end-failed') %}
+          <span class="gutter">~</span>
+          <span class="body">
+            session {{ line.status or 'ended' }}
+            {%- if line.duration_seconds %} after {{ line.duration_seconds | duration }}{% endif %}
+          </span>
+
+        {% else %}
+          <span class="gutter">·</span>
+          <span class="body">
+            {{ line.event_type | event_label }}{% if line.status %} — {{ line.status }}{% endif %}
+            {%- if line.agent_version %} (agent {{ line.agent_version }}){% endif %}
+          </span>
+        {% endif %}
+      </div>
+    {% else %}
+      <div class="tline meta">
+        <span class="tstamp">—</span><span class="gutter">·</span>
+        <span class="body">no events recorded for this session</span>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="panel" style="margin-top: 14px">
+  <div class="panel-head">
+    <h3>Alerts raised by this session</h3>
+    <span class="sub">{{ alerts | length }}</span>
+  </div>
+  {% if alerts %}
+    <div class="table-wrap">
+      <table class="grid">
+        <thead><tr><th>Severity</th><th>Rule</th><th>Description</th><th>Status</th><th>Raised</th></tr></thead>
+        <tbody>
+          {% for alert in alerts %}
+            <tr class="{% if alert.severity == 'high' %}is-high{% elif alert.severity == 'medium' %}is-medium{% endif %}">
+              <td>{{ ui.sev(alert.severity) }}</td>
+              <td class="mono"><a href="{{ url_for('alerts.index', type=alert.alert_type) }}">{{ alert.alert_type }}</a></td>
+              <td class="truncate" style="max-width: 520px">{{ alert.description }}</td>
+              <td>{{ ui.state(alert.status) }}</td>
+              <td>{{ ui.ts(alert.timestamp) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    {{ ui.empty('No alerts reference this session',
+                'Session-scoped rules are suspicious_command, malware_staging and post_auth_activity.') }}
+  {% endif %}
+</div>
+
+<div style="margin-top: 14px">
+  {{ ui.note('Attempted passwords are stored locally for analysis and are never read by this page — the
+              transcript records only that a password was submitted. Commands are highlighted using the alert
+              engine’s own pattern set, so a red line here is a line a rule fires on.') }}
+</div>
+
+{% endblock %}

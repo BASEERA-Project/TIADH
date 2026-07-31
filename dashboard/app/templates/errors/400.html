@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% set title = 'Bad request' %}
+{% block content %}
+  <div class="panel">
+    <div class="empty">
+      <strong>400 — bad request</strong>
+      {{ error.description if error and error.description else 'The request could not be processed.' }}
+      <div class="tiny dim" style="margin-top: 8px">
+        If this was an alert action, reload the page and try again — the form token expires with the session.
+      </div>
+      <div style="margin-top: 14px">
+        <a class="btn" href="{{ url_for('alerts.index') }}">Back to Alerts</a>
+      </div>
+    </div>
+  </div>
+{% endblock %}

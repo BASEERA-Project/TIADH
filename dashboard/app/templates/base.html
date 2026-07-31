@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{{ title }} · {{ app_name }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/soc.css') }}">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#128737;</text></svg>">
+  <script src="{{ url_for('static', filename='js/soc.js') }}" defer></script>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-grid" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+    <rect x="1.5" y="1.5" width="5" height="5" rx="1"/><rect x="9.5" y="1.5" width="5" height="5" rx="1"/>
+    <rect x="1.5" y="9.5" width="5" height="5" rx="1"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/>
+  </symbol>
+  <symbol id="i-target" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+    <circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.4"/>
+  </symbol>
+  <symbol id="i-terminal" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+    <rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/>
+    <path d="M4.5 6.5 6.7 8.5 4.5 10.5M8.5 10.8h3.4"/>
+  </symbol>
+  <symbol id="i-alert" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+    <path d="M8 2.2 14.6 13.4H1.4z" stroke-linejoin="round"/><path d="M8 6.4v3.1M8 11.4v.6"/>
+  </symbol>
+  <symbol id="i-server" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+    <rect x="1.5" y="2.5" width="13" height="4.5" rx="1"/><rect x="1.5" y="9" width="13" height="4.5" rx="1"/>
+    <path d="M4 4.8h.01M4 11.3h.01"/>
+  </symbol>
+  <symbol id="i-share" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+    <circle cx="12" cy="3.5" r="2"/><circle cx="4" cy="8" r="2"/><circle cx="12" cy="12.5" r="2"/>
+    <path d="M5.8 7 10.2 4.6M5.8 9l4.4 2.4"/>
+  </symbol>
+  <symbol id="i-shield" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+    <path d="M8 1.6 13.4 3.7v4.1c0 3.2-2.2 5.6-5.4 6.6-3.2-1-5.4-3.4-5.4-6.6V3.7z" stroke-linejoin="round"/>
+    <path d="M5.8 8.1 7.3 9.6l3-3.2"/>
+  </symbol>
+  <symbol id="i-copy" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+    <rect x="5.5" y="5.5" width="8" height="8" rx="1.2"/><path d="M10.5 3.5h-7a1 1 0 0 0-1 1v7"/>
+  </symbol>
+  <symbol id="i-download" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+    <path d="M8 2v8M4.8 7 8 10.2 11.2 7M2.5 13.2h11"/>
+  </symbol>
+  <symbol id="i-info" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+    <circle cx="8" cy="8" r="6.2"/><path d="M8 7.4v3.8M8 5.1v.5"/>
+  </symbol>
+  <symbol id="i-search" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+    <circle cx="7" cy="7" r="4.6"/><path d="m10.6 10.6 3 3"/>
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+    <circle cx="8" cy="8" r="3.1"/><path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3 3l1.1 1.1M11.9 11.9 13 13M13 3l-1.1 1.1M4.1 11.9 3 13"/>
+  </symbol>
+</svg>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <a class="brand-mark" href="{{ url_for('overview.index') }}">
+        <svg width="19" height="19"><use href="#i-shield"/></svg>
+        {{ app_name }}
+      </a>
+      <div class="brand-sub">{{ app_subtitle }}</div>
+    </div>
+
+    <nav class="nav">
+      {% for item in nav %}
+        {% set active = current_endpoint.startswith(item.endpoint.split('.')[0] ~ '.') %}
+        <a class="nav-item{% if active %} is-active{% endif %}"
+           href="{{ url_for(item.endpoint) }}" title="{{ item.hint }}">
+          <svg width="15" height="15"><use href="#i-{{ item.icon }}"/></svg>
+          {{ item.label }}
+          {% if item.endpoint == 'alerts.index' %}
+            {% set n = open_high_alerts() %}
+            {% if n %}<span class="nav-count" title="open high-severity alerts">{{ n }}</span>{% endif %}
+          {% endif %}
+        </a>
+      {% endfor %}
+    </nav>
+
+    <div class="sidebar-foot">
+      <dl>
+        <dt>Schema</dt><dd>v{{ schema_version }}</dd>
+        <dt>Access</dt><dd>read-only</dd>
+        <dt>Health</dt><dd><a href="{{ url_for('api.health_check') }}">/api/health</a></dd>
+      </dl>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        {% block crumb %}{% endblock %}
+        <h1>{{ heading | default(title) }}</h1>
+      </div>
+
+      <div class="topbar-actions" data-live>
+        <div class="clock" data-live-stamp>
+          <span class="dot"></span><span data-clock>—</span>
+        </div>
+        <label class="field" title="Reload this page automatically">
+          <select data-refresh data-default="{{ refresh_seconds }}" aria-label="Auto refresh">
+            <option value="0">Manual</option>
+            <option value="10">10s</option>
+            <option value="30">30s</option>
+            <option value="60">60s</option>
+            <option value="300">5m</option>
+          </select>
+        </label>
+        <button class="btn btn-ghost" data-theme-toggle type="button">
+          <svg width="13" height="13"><use href="#i-sun"/></svg>
+          <span data-theme-label>Light</span>
+        </button>
+      </div>
+    </header>
+
+    <div class="content">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="flashes">
+            {% for category, message in messages %}
+              <div class="flash {{ category }}">{{ message }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+</div>
+
+</body>
+</html>

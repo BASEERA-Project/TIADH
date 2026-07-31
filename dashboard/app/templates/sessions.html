@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+
+{% block crumb %}<div class="crumb">Derived from the event stream · passwords masked in the database view</div>{% endblock %}
+
+{% block content %}
+
+<form class="filters" method="get" data-autosubmit>
+  <label class="field grow">
+    <span>Search</span>
+    <input type="search" name="q" value="{{ filters.q or '' }}" data-search
+           placeholder="session id, IP or username  —  press /" autocomplete="off">
+  </label>
+
+  <label class="field">
+    <span>Status</span>
+    <select name="status">
+      <option value="">any</option>
+      {% for value in ['active', 'closed', 'failed'] %}
+        <option value="{{ value }}" {% if filters.status == value %}selected{% endif %}>{{ value }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="field">
+    <span>Node</span>
+    <select name="node">
+      <option value="">any</option>
+      {% for node in nodes %}
+        <option value="{{ node }}" {% if filters.node == node %}selected{% endif %}>{{ node }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="field">
+    <span>Protocol</span>
+    <select name="protocol">
+      <option value="">any</option>
+      {% for protocol in protocols %}
+        <option value="{{ protocol }}" {% if filters.protocol == protocol %}selected{% endif %}>{{ protocol }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="field">
+    <span>Started</span>
+    <select name="window">
+      {% for value, label in windows %}
+        <option value="{{ value }}" {% if (filters.window or 'all') == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="check">
+    <input type="checkbox" name="breached_only" value="1" {% if filters.breached_only %}checked{% endif %}>
+    logged in
+  </label>
+  <label class="check">
+    <input type="checkbox" name="commands_only" value="1" {% if filters.commands_only %}checked{% endif %}>
+    ran commands
+  </label>
+
+  <div class="spacer"></div>
+  <button class="btn btn-primary" type="submit">Apply</button>
+  {% if filter_count %}
+    <a class="btn" href="{{ url_for('sessions.index') }}">Clear {{ filter_count }}</a>
+  {% endif %}
+</form>
+
+{% if filters.ip %}
+  <div style="margin-bottom: 14px">
+    {{ ui.note('Filtered to sessions from ' ~ filters.ip ~ '.') }}
+  </div>
+{% endif %}
+
+<div class="panel">
+  <div class="panel-head">
+    <h2>Sessions</h2>
+    <span class="sub">{{ page.total | number }} matching session{{ '' if page.total == 1 else 's' }}</span>
+  </div>
+
+  {% if page.rows %}
+    <div class="table-wrap">
+      <table class="grid">
+        <thead>
+          <tr>
+            <th>Session</th>
+            {{ ui.sort_th('Node', 'node', filters.sort) }}
+            <th>Proto</th>
+            {{ ui.sort_th('Attacker', 'ip', filters.sort) }}
+            <th>Country</th>
+            <th>Last username</th>
+            <th>Password</th>
+            <th>Status</th>
+            {{ ui.sort_th('Events', 'events', filters.sort, 'num') }}
+            {{ ui.sort_th('Logins', 'logins', filters.sort, 'num') }}
+            {{ ui.sort_th('Commands', 'commands', filters.sort, 'num') }}
+            {{ ui.sort_th('Duration', 'duration', filters.sort, 'num') }}
+            {{ ui.sort_th('Started', 'start_time', filters.sort) }}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in page.rows %}
+            <tr class="{% if row.login_successes %}is-high{% elif row.command_count %}is-medium{% endif %}">
+              <td>
+                <a class="mono" href="{{ url_for('sessions.detail', session_id=row.session_id) }}">{{ row.session_id }}</a>
+              </td>
+              <td class="mono">{{ row.node_id }}</td>
+              <td class="mono">{{ row.protocol or DASH }}</td>
+              <td>{{ ui.ip(row.attacker_ip) }}</td>
+              <td class="truncate dim" style="max-width: 120px">{{ row.country or DASH }}</td>
+              <td class="mono truncate" style="max-width: 130px">{{ row.username or DASH }}</td>
+              <td class="mono dim">{{ row.password or DASH }}</td>
+              <td>{{ ui.state(row.status) }}</td>
+              <td class="num">{{ row.event_count | number }}</td>
+              <td class="num {% if not row.login_attempts %}zero{% endif %}">
+                {{ row.login_attempts | number }}{% if row.login_successes %}
+                  <span class="chip sev-high" style="margin-left: 5px">+{{ row.login_successes }}</span>
+                {% endif %}
+              </td>
+              <td class="num {% if not row.command_count %}zero{% endif %}">{{ row.command_count | number }}</td>
+              <td class="num">{{ row.duration_seconds | duration }}</td>
+              <td>{{ ui.ts(row.start_time) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.pager(page, 'sessions') }}
+  {% else %}
+    {{ ui.empty('No sessions match these filters',
+                'Sessions are derived from the event stream, so they appear as soon as a node ships a connection event.') }}
+  {% endif %}
+</div>
+
+{% endblock %}
