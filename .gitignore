@@ -230,7 +230,3 @@ __marimo__/
 *.db-wal
 *.sqlite
 *.sqlite3
-
-#   Exception: the shared aggregator database is deliberately committed, so the
-#   team pulls one dataset. Its -shm/-wal files above still are not.
-!common/src/common/honeypot_aggregator.db
