@@ -1,8 +1,0 @@
-# The shared storage layer. Every write the collector performs goes through
-# common.db.database.Database, so it is a hard dependency rather than something
-# located on sys.path at runtime. Editable, like the other packages consume it.
--e ../common
-
-fastapi>=0.115,<1.0
-uvicorn[standard]>=0.30,<1.0
-pydantic>=2.0,<3.0

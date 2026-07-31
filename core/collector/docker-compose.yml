@@ -1,8 +1,8 @@
 services:
   collector:
     build:
-      context: ..               # repo root, so the Dockerfile can COPY common/
-      dockerfile: Part2_Central_Collector_API/Dockerfile
+      context: ../..            # repo root, so the Dockerfile can COPY common/ and core/
+      dockerfile: core/collector/Dockerfile
     ports:
       - "8000:8000"
     environment:

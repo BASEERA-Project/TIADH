@@ -1,0 +1,16 @@
+# Build contexts are the repository root, so keep local-only state out of the
+# image: a host virtualenv or a live database inside a build would be both
+# broken and much larger than the source it shadows.
+**/.venv
+**/__pycache__
+**/*.py[cod]
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/.pytest_cache
+**/.ruff_cache
+**/node_modules
+.git
+.gitignore
+**/.env
+**/demo

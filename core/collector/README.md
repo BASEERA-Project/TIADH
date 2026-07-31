@@ -1,4 +1,8 @@
-# Part 2 — Central Log Aggregation & Ingestion
+# Collector — Central Log Aggregation & Ingestion (Part 2)
+
+Lives at `core/collector/` and is part of the `core` uv project, alongside the
+CLI (`core/main.py`) and the enricher (`core/enricher/`). It has no environment
+of its own: `uv sync` in `core/` installs everything it needs.
 
 This service receives team-standardised honeypot events at `POST /api/events`,
 validates them against **Baseline v1.3**, authenticates the sending node, and
@@ -30,37 +34,33 @@ loop (`mark_stale_nodes_offline` + `close_stale_sessions`) on a 60-second timer.
 
 | Requirement | Notes |
 |---|---|
-| Python 3.12+ | |
-| The repository checked out | `requirements.txt` installs `common/` from the sibling directory (`-e ../common`) |
-| An initialised schema | Run `python main.py init` in `core/` once, before first start |
+| Python 3.12+ and `uv` | |
+| `uv sync` run in `core/` | Installs the collector, the enricher, the CLI and the shared `common` package into one environment |
+| An initialised schema | Run `uv run python main.py init` in `core/` once, before first start |
 | Shared database path | Every part must point `HONEYPOT_DB_PATH` at the **same file** |
 
 ---
 
 ## Quick start (local)
 
-### 1. Initialise the shared database (`core` owns this step)
+### 1. Install and initialise the shared database
 
 ```bash
-cd ../core
+cd core
 uv sync
 uv run python main.py init
 ```
 
-### 2. Set up Part 2
+### 2. Point at the shared database
 
 ```bash
-cd Part2_Central_Collector_API
-python3 -m venv .venv
-source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -r requirements-dev.txt
-cp .env.example .env
+cp collector/.env.example collector/.env
 ```
 
-Edit `.env` and set at minimum:
+Edit it and set at minimum:
 
 ```dotenv
-# Absolute path to the same DB file core/main.py init created
+# Absolute path to the same DB file `main.py init` created
 HONEYPOT_DB_PATH=/absolute/path/to/common/src/common/honeypot_aggregator.db
 ```
 
@@ -69,8 +69,10 @@ dependency, so `from common.db.database import Database` just works.
 
 ### 3. Run the collector
 
+From `core/`:
+
 ```bash
-uvicorn app.main:app --reload
+uv run uvicorn --app-dir collector app.main:app --reload
 ```
 
 Open `http://127.0.0.1:8000/docs` to test the API interactively.
@@ -114,8 +116,10 @@ Sending the same request again returns:
 
 ## Run tests
 
+From `core/` — `pyproject.toml` points pytest at `collector/tests`:
+
 ```bash
-pytest -q
+uv run pytest -q
 ```
 
 ---
@@ -126,14 +130,18 @@ pytest -q
 > has been initialised:
 >
 > ```bash
-> cd ../core
+> cd core
 > uv run python main.py init
 > ```
 
 ```bash
-cd Part2_Central_Collector_API
+cd core/collector
 docker compose up --build
 ```
+
+The build context is the repository root so the image can install `core` and
+its `common` dependency together; `.dockerignore` keeps local venvs and
+database files out of it.
 
 The compose file mounts a shared `tiadh_db` named volume for the database.
 All parts that run in Docker must use the **same named volume** so they share
