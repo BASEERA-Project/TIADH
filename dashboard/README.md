@@ -7,8 +7,8 @@ chart.
 ```bash
 cd dashboard
 uv sync
-python tools/seed_demo.py          # optional: generate a day of demo traffic
-python main.py --db demo/honeypot_demo.db
+uv run python tools/seed_demo.py          # optional: generate a day of demo traffic
+uv run python main.py --db demo/honeypot_demo.db
 ```
 
 Then open <http://127.0.0.1:8050>. Without `--db` it reads the shared database at
@@ -105,8 +105,8 @@ outbound feed to the network; set `DASHBOARD_SECRET_KEY` if you do.
 without `--force`, so it cannot disturb collected data.
 
 ```bash
-python tools/seed_demo.py --hours 24 --attackers 42
-python tools/seed_demo.py --force            # regenerate
+uv run python tools/seed_demo.py --hours 24 --attackers 42
+uv run python tools/seed_demo.py --force            # regenerate
 ```
 
 It generates scanners, brute force, credential spraying, three attackers who get
@@ -130,7 +130,7 @@ Flask's server is fine for a demo. For anything left running:
 
 ```bash
 uv sync --extra serve
-waitress-serve --host 127.0.0.1 --port 8050 wsgi:app
+uv run waitress-serve --host 127.0.0.1 --port 8050 wsgi:app
 ```
 
 Threaded workers are safe — each request gets its own read-only handle and
