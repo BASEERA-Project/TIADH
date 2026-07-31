@@ -1,5 +1,5 @@
 """
-alerting/alert_engine.py — Evaluates the rule set and persists what it finds.
+common/alerting/alert_engine.py — Evaluates the rule set and persists what it finds.
 
 Design notes
 ------------
@@ -13,7 +13,7 @@ Design notes
 * **Isolated failures.** A rule that raises is logged and skipped — one bad
   query must not stop the other six from running.
 
-Run it from the CLI (``python main.py alerts``), on a timer
+Run it from the CLI (``python main.py alerts`` in ``core/``), on a timer
 (``python main.py watch``), or import it into the collector process.
 """
 
@@ -25,7 +25,7 @@ from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
 from common import config
-from alerting.rules import Finding, RULE_REGISTRY
+from common.alerting.rules import Finding, RULE_REGISTRY
 from common.db.database import Database, get_db
 from common.db.validation import parse_timestamp, utc_now
 

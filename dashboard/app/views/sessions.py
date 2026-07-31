@@ -12,12 +12,12 @@ from __future__ import annotations
 
 from flask import Blueprint, abort, render_template
 
+from common.alerting.rules import classify_command
 from common.db.database import Database
 
 from app import queries
 from app.db import get_db
 from app.formatting import to_datetime
-from app.integrations import classify_command
 from app.views import active_filters, collect, paging
 
 bp = Blueprint("sessions", __name__, url_prefix="/sessions")

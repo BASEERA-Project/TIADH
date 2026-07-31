@@ -24,7 +24,7 @@ override it anywhere with `HONEYPOT_DB_PATH`.
 | **Sessions** | The list, and the transcript. A session renders as a terminal: connect → 20 failed logins → accepted → command sequence → session end, timestamped down the left, passwords as `***MASKED***`, risky commands flagged by the alert engine's own classifier. |
 | **Alerts** | One row per `alerts` row, with acknowledge/close actions, next to a panel showing all seven detection rules and their live thresholds. |
 | **Nodes** | Sensor health in missed heartbeats — amber past 2, red past 5 — plus events shipped and measured ingest lag. |
-| **Feeds** | A UI over `core/export/exporter.py`. Pick a window and filters, preview the records, download JSON, CSV or STIX from a stable URL. |
+| **Feeds** | A UI over `common/export/exporter.py`. Pick a window and filters, preview the records, download JSON, CSV or STIX from a stable URL. |
 
 ## Configuration
 
@@ -43,7 +43,9 @@ Every setting is an environment variable (`app/settings.py`):
 
 Detection thresholds are **not** listed here on purpose. They belong to
 `common/config.py`, and the rules panel reads them live so it always shows what
-the engine is using. Anything schema-shaped belongs to `common/db/`.
+the engine is using. Anything schema-shaped belongs to `common/db/`, the feed
+format to `common/export/`, and the rules to `common/alerting/` — the dashboard
+imports those, never `core/`.
 
 It binds to loopback by default. `--host 0.0.0.0` exposes attacker data and the
 outbound feed to the network; set `DASHBOARD_SECRET_KEY` if you do.
@@ -95,7 +97,6 @@ app/
   db.py             request-scoped read-only handle (+ the one write path)
   queries.py        adapters — windows, pagination, gap filling, health verdict
   formatting.py     Jinja filters — timestamps, ages, severities, scores
-  integrations.py   borrows FeedExporter and the command classifier from core/
   rule_catalog.py   prose for the rules panel; values come from common.config
   views/            one blueprint per screen, plus a small JSON API
   templates/        base, macros, one template per screen

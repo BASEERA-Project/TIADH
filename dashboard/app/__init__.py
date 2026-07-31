@@ -6,7 +6,7 @@ app/__init__.py — Application factory.
 
 The dashboard is a read model over the Baseline v1.3 database. It owns no
 detection logic and no schema: thresholds come from ``common.config``, the feed
-comes from ``core/export/exporter.py``, and every table it renders is one the
+comes from ``common.export.exporter``, and every table it renders is one the
 collector, the enricher and the alert engine wrote.
 """
 

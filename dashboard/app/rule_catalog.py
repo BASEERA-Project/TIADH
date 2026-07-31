@@ -8,7 +8,7 @@ the rule that produced a specific alert is a two-second answer rather than a
 grep through source.
 
 Prose is the only thing this module owns. If a rule is added to
-``core/alerting/rules.py`` without an entry here it still appears on the panel,
+``common/alerting/rules.py`` without an entry here it still appears on the panel,
 labelled as undocumented, rather than silently vanishing.
 """
 
@@ -17,8 +17,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from common import config
-
-from app.integrations import command_patterns, rule_names
+from common.alerting.rules import COMMAND_PATTERNS, RULE_REGISTRY
 
 
 def _threshold(label: str, value: Any, env: str) -> Dict[str, Any]:
@@ -77,14 +76,14 @@ def catalog() -> List[Dict[str, Any]]:
         "suspicious_command": {
             "title": "High-risk command",
             "fires_when": (
-                f"a command matches one of the {len(command_patterns())} high-risk "
+                f"a command matches one of the {len(COMMAND_PATTERNS)} high-risk "
                 "patterns (payload retrieval, execution, persistence, anti-forensics, "
                 "reconnaissance)"
             ),
             "severity": "carried by the matched pattern — low, medium or high",
             "thresholds": [
-                _threshold("patterns", len(command_patterns()),
-                           "core/alerting/rules.py: COMMAND_PATTERNS"),
+                _threshold("patterns", len(COMMAND_PATTERNS),
+                           "common/alerting/rules.py: COMMAND_PATTERNS"),
             ],
             "dedupe": "per event — every distinct command is its own alert, no cooldown",
         },
@@ -119,11 +118,10 @@ def catalog() -> List[Dict[str, Any]]:
         },
     }
 
-    known = rule_names() or list(described)
     enabled = set(config.ENABLED_RULES)
 
     rules = []
-    for key in known:
+    for key in sorted(RULE_REGISTRY):
         entry = described.get(key, {
             "title": key.replace("_", " ").capitalize(),
             "fires_when": "no description registered in the dashboard catalog",
@@ -153,6 +151,8 @@ def global_settings() -> List[Dict[str, Any]]:
 def patterns_by_severity() -> Dict[str, List[Dict[str, Any]]]:
     """The command pattern table, grouped so the high-risk ones read first."""
     grouped: Dict[str, List[Dict[str, Any]]] = {"high": [], "medium": [], "low": []}
-    for entry in command_patterns():
-        grouped.setdefault(entry["severity"], []).append(entry)
+    for pattern, severity, label in COMMAND_PATTERNS:
+        grouped.setdefault(severity, []).append(
+            {"pattern": pattern, "severity": severity, "label": label}
+        )
     return grouped

@@ -1,5 +1,5 @@
 """
-export/exporter.py — Turns the database into a shareable threat feed.
+common/export/exporter.py — Turns the database into a shareable threat feed.
 
 Formats
 -------

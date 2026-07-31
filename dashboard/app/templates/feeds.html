@@ -5,13 +5,6 @@
 
 {% block content %}
 
-{% if not feed %}
-  <div class="panel">
-    {{ ui.empty('Feed export unavailable',
-                'core/export/exporter.py could not be imported, so there is nothing to preview or download.') }}
-  </div>
-{% else %}
-
 <form class="filters" method="get" data-autosubmit>
   <label class="field">
     <span>Minimum severity</span>
@@ -96,7 +89,7 @@
     {% endfor %}
   </div>
   <div class="panel-foot">
-    Every file is written by <span class="mono">core/export/exporter.py</span> — the same code
+    Every file is written by <span class="mono">common/export/exporter.py</span> — the same code
     <span class="mono">python main.py export</span> runs — against exactly the payload previewed below, so
     the preview and the download can never disagree.
   </div>
@@ -178,7 +171,5 @@
   </div>
   <div class="panel-foot">{{ feed.feed.notice }}</div>
 </div>
-
-{% endif %}
 
 {% endblock %}

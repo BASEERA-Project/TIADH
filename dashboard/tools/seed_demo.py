@@ -39,12 +39,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
-DASHBOARD_DIR = Path(__file__).resolve().parent.parent
-REPO_ROOT = DASHBOARD_DIR.parent
-sys.path.insert(0, str(REPO_ROOT / "core"))
+from common import config
+from common.alerting.alert_engine import AlertEngine
+from common.db.database import Database
+from common.db.validation import parse_timestamp
 
-from common import config  # noqa: E402
-from common.db.database import Database  # noqa: E402
+DASHBOARD_DIR = Path(__file__).resolve().parent.parent
 
 TS = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -382,8 +382,6 @@ def build_events(rng, attackers, now: datetime, hours: int, quiet_node: str
 
 def load(db: Database, events: List[Dict[str, Any]], attackers, now: datetime,
          quiet_node: str, run_alerts: bool, verbose: bool) -> Dict[str, Any]:
-    from alerting.alert_engine import AlertEngine  # noqa: PLC0415 - needs core on path
-
     for node_id in NODES:
         hostname, location, address = NODE_META.get(node_id, (node_id, "Lab", None))
         db.upsert_node(node_id, hostname=hostname, location=location, ip_address=address)
@@ -412,8 +410,6 @@ def load(db: Database, events: List[Dict[str, Any]], attackers, now: datetime,
     alerts_created = 0
     chunk: List[Dict[str, Any]] = []
     boundary = None
-
-    from common.db.validation import parse_timestamp
 
     def flush():
         nonlocal chunk, alerts_created

@@ -1,5 +1,5 @@
 """
-Feeds — a UI over ``core/export/exporter.py``.
+Feeds — a UI over ``common.export.exporter``.
 
 The preview and the download are produced by the same ``FeedExporter`` that
 ``python main.py export`` runs, driven through a subclass whose ``build_feed``
@@ -23,11 +23,12 @@ from typing import Any, Dict, Optional
 
 from flask import Blueprint, Response, abort, render_template, request, url_for
 
+from common import config
+from common.export.exporter import FeedExporter
+
 from app import queries
 from app.db import get_db
 from app.formatting import to_datetime
-from app.integrations import feed_exporter_class
-from common import config
 
 bp = Blueprint("feeds", __name__, url_prefix="/feeds")
 
@@ -72,14 +73,6 @@ def index():
     params = _params()
     feed = _build(db, params)
 
-    if feed is None:
-        return render_template(
-            "feeds.html", title="Feeds", feed=None, params=params,
-            countries=db.get_countries(),
-            alert_types=db.get_alert_types(),
-            windows=queries.WINDOW_CHOICES, files=FEED_FILES, urls={},
-        )
-
     urls = {
         name: url_for("feeds.download", filename=name, **_query(params))
         for name in FEED_FILES
@@ -116,13 +109,10 @@ def download(filename: str):
 
     db = get_db()
     feed = _build(db, _params())
-    if feed is None:
-        abort(503, "feed export is unavailable — core/export/exporter.py not found")
 
-    exporter_class = feed_exporter_class()
     workdir = Path(tempfile.mkdtemp(prefix="tiadh-feed-"))
     try:
-        exporter = _prepared_exporter(exporter_class, feed, db, workdir)
+        exporter = _prepared_exporter(feed, db, workdir)
         writer = spec["writer"]
         if writer == "json":
             path = exporter.export_json()
@@ -181,14 +171,10 @@ def _query(params: Dict[str, Any]) -> Dict[str, Any]:
     return query
 
 
-def _build(db, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    exporter_class = feed_exporter_class()
-    if exporter_class is None:
-        return None
-
+def _build(db, params: Dict[str, Any]) -> Dict[str, Any]:
     workdir = Path(tempfile.mkdtemp(prefix="tiadh-feed-"))
     try:
-        exporter = exporter_class(db=db, output_dir=workdir)
+        exporter = FeedExporter(db=db, output_dir=workdir)
         feed = exporter.build_feed(min_severity=params["min_severity"])
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
@@ -254,7 +240,7 @@ def _at_or_after(value: Optional[str], since: str) -> bool:
     return moment >= boundary
 
 
-def _prepared_exporter(exporter_class, feed: Dict[str, Any], db, workdir: Path):
+def _prepared_exporter(feed: Dict[str, Any], db, workdir: Path) -> FeedExporter:
     """
     A ``FeedExporter`` whose payload is already decided.
 
@@ -264,7 +250,7 @@ def _prepared_exporter(exporter_class, feed: Dict[str, Any], db, workdir: Path):
     screen rather than re-querying and quietly returning something else.
     """
 
-    class _Prepared(exporter_class):  # type: ignore[misc, valid-type]
+    class _Prepared(FeedExporter):
         def build_feed(self, min_severity=None):  # noqa: D102 - see above
             return feed
 

@@ -177,83 +177,78 @@
     </div>
   </div>
 
-  {% if rules %}
-    <div class="rules">
-      {% for rule in rules %}
-        {% set stat = rule_stats.get(rule.key) %}
-        <div class="rule{% if not rule.enabled %} is-disabled{% endif %}">
-          <div>
-            <h4>
-              {{ rule.title }}
-              <span class="tag">{{ rule.key }}</span>
-              {% if not rule.enabled %}<span class="chip">disabled</span>{% endif %}
-            </h4>
-            <div class="what">Fires when {{ rule.fires_when }}.</div>
-            <div class="meta">
-              Severity: {{ rule.severity }} · Deduplication: {{ rule.dedupe }}
-              {%- if rule.note %} · {{ rule.note }}{% endif %}
-            </div>
-            <div class="thresholds">
-              {% for threshold in rule.thresholds %}
-                <span class="threshold" data-tip="{{ threshold.env }}">
-                  <span class="k">{{ threshold.label }}</span>
-                  <span class="v">{{ threshold.value }}</span>
-                </span>
-              {% endfor %}
-            </div>
+  <div class="rules">
+    {% for rule in rules %}
+      {% set stat = rule_stats.get(rule.key) %}
+      <div class="rule{% if not rule.enabled %} is-disabled{% endif %}">
+        <div>
+          <h4>
+            {{ rule.title }}
+            <span class="tag">{{ rule.key }}</span>
+            {% if not rule.enabled %}<span class="chip">disabled</span>{% endif %}
+          </h4>
+          <div class="what">Fires when {{ rule.fires_when }}.</div>
+          <div class="meta">
+            Severity: {{ rule.severity }} · Deduplication: {{ rule.dedupe }}
+            {%- if rule.note %} · {{ rule.note }}{% endif %}
           </div>
-          <div class="counts">
-            <div class="n {% if not stat %}zero{% endif %}">{{ stat.total if stat else 0 }}</div>
-            <div class="lbl">raised</div>
-            {% if stat and stat.open_count %}
-              <div style="margin-top: 6px">
-                <a class="chip state-open" href="{{ url_for('alerts.index', type=rule.key, status='open') }}">
-                  {{ stat.open_count }} open
-                </a>
-              </div>
-            {% endif %}
-            {% if stat and stat.last_fired %}
-              <div class="tiny dim" style="margin-top: 5px">{{ stat.last_fired | relative }}</div>
-            {% endif %}
+          <div class="thresholds">
+            {% for threshold in rule.thresholds %}
+              <span class="threshold" data-tip="{{ threshold.env }}">
+                <span class="k">{{ threshold.label }}</span>
+                <span class="v">{{ threshold.value }}</span>
+              </span>
+            {% endfor %}
           </div>
         </div>
-      {% endfor %}
-    </div>
-
-    {% if patterns.high or patterns.medium or patterns.low %}
-      <details class="patterns">
-        <summary>
-          High-risk command patterns
-          ({{ patterns.high | length }} high, {{ patterns.medium | length }} medium,
-          {{ patterns.low | length }} low) — matched in order, first match wins
-        </summary>
-        <div class="table-wrap">
-          <table class="grid">
-            <thead><tr><th>Severity</th><th>What it catches</th><th>Pattern</th></tr></thead>
-            <tbody>
-              {% for severity in ['high', 'medium', 'low'] %}
-                {% for entry in patterns.get(severity, []) %}
-                  <tr>
-                    <td>{{ ui.sev(entry.severity) }}</td>
-                    <td>{{ entry.label }}</td>
-                    <td class="mono dim">{{ entry.pattern }}</td>
-                  </tr>
-                {% endfor %}
-              {% endfor %}
-            </tbody>
-          </table>
+        <div class="counts">
+          <div class="n {% if not stat %}zero{% endif %}">{{ stat.total if stat else 0 }}</div>
+          <div class="lbl">raised</div>
+          {% if stat and stat.open_count %}
+            <div style="margin-top: 6px">
+              <a class="chip state-open" href="{{ url_for('alerts.index', type=rule.key, status='open') }}">
+                {{ stat.open_count }} open
+              </a>
+            </div>
+          {% endif %}
+          {% if stat and stat.last_fired %}
+            <div class="tiny dim" style="margin-top: 5px">{{ stat.last_fired | relative }}</div>
+          {% endif %}
         </div>
-      </details>
-    {% endif %}
+      </div>
+    {% endfor %}
+  </div>
 
-    <div class="panel-foot">
-      Thresholds come from <span class="mono">common/config.py</span> and any environment override in
-      effect; the dashboard reads them at render time rather than keeping a copy.
-    </div>
-  {% else %}
-    {{ ui.empty('Rule definitions unavailable',
-                'core/alerting/rules.py could not be imported, so only the alerts themselves are shown.') }}
+  {% if patterns.high or patterns.medium or patterns.low %}
+    <details class="patterns">
+      <summary>
+        High-risk command patterns
+        ({{ patterns.high | length }} high, {{ patterns.medium | length }} medium,
+        {{ patterns.low | length }} low) — matched in order, first match wins
+      </summary>
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>Severity</th><th>What it catches</th><th>Pattern</th></tr></thead>
+          <tbody>
+            {% for severity in ['high', 'medium', 'low'] %}
+              {% for entry in patterns.get(severity, []) %}
+                <tr>
+                  <td>{{ ui.sev(entry.severity) }}</td>
+                  <td>{{ entry.label }}</td>
+                  <td class="mono dim">{{ entry.pattern }}</td>
+                </tr>
+              {% endfor %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
   {% endif %}
+
+  <div class="panel-foot">
+    Thresholds come from <span class="mono">common/config.py</span> and any environment override in
+    effect; the dashboard reads them at render time rather than keeping a copy.
+  </div>
 </div>
 
 {% endblock %}

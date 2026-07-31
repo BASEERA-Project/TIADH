@@ -15,12 +15,13 @@ import json
 
 from flask import Blueprint, Response, abort, current_app, render_template
 
+from common.alerting.rules import classify_command
 from common.db.database import Database
+from common.export.exporter import assert_no_secrets, scrub
 
 from app import queries
 from app.db import get_db
 from app.formatting import now_utc
-from app.integrations import classify_command, scrub_payload
 from app.views import active_filters, collect, paging
 
 bp = Blueprint("attackers", __name__, url_prefix="/attackers")
@@ -86,9 +87,10 @@ def export(ip: str, fmt: str):
     """
     Download everything the platform knows about one IP.
 
-    ``scrub_payload`` is the exporter's own masking pass. Reusing it means this
-    button obeys the same "no credential leaves local storage" guarantee as the
-    published feed, enforced by the same code rather than by a promise.
+    ``scrub`` and ``assert_no_secrets`` are the exporter's own masking pass.
+    Reusing them means this button obeys the same "no credential leaves local
+    storage" guarantee as the published feed, enforced by the same code rather
+    than by a promise — and raises rather than redacts if one ever gets through.
     """
     if fmt not in ("json", "csv"):
         abort(404)
@@ -112,7 +114,8 @@ def export(ip: str, fmt: str):
             "Honeypot observations should be corroborated before blocking."
         ),
     }
-    dossier = scrub_payload(dossier)
+    dossier = scrub(dossier)
+    assert_no_secrets(dossier)
     safe_ip = ip.replace(":", "_").replace("/", "_")
 
     if fmt == "json":

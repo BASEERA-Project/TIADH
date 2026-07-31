@@ -1,5 +1,5 @@
 """
-alerting/rules.py — What counts as suspicious.
+common/alerting/rules.py — What counts as suspicious.
 
 Rules are kept separate from the engine so that tuning a threshold, adding a
 command pattern or switching a rule off never means touching execution logic.

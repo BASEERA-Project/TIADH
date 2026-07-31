@@ -18,12 +18,6 @@ from pathlib import Path
 
 from common import config as core_config
 
-#: dashboard/
-BASE_DIR = Path(__file__).resolve().parent.parent
-
-#: repository root (holds common/, core/, nodes/, dashboard/)
-REPO_ROOT = BASE_DIR.parent
-
 
 def _int(name: str, default: int) -> int:
     try:
