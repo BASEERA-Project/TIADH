@@ -220,3 +220,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# SQLite databases
+#   The Baseline v1.3 database is local state written at runtime by the
+#   collector, the alert engine and the demo seeder — not source. The -shm and
+#   -wal files are WAL artefacts of an open handle and are never worth committing.
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+#   Exception: the shared aggregator database is deliberately committed, so the
+#   team pulls one dataset. Its -shm/-wal files above still are not.
+!common/src/common/honeypot_aggregator.db
