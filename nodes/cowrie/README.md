@@ -34,14 +34,25 @@ Copy the template and fill in real values:
 cp .env.example .env
 ```
 
-| Variable | Description |
-|---|---|
-| `COLLECTOR_URL` | Full URL of the collector's `/api/events` endpoint |
-| `NODE_KEY` | This node's secret key, issued by Part 2 |
+| Variable | Default | Description |
+|---|---|---|
+| `NODE_ID` | `node-02` | This node's ID. Change it per sensor (`node-01`, `node-02`, …). Must be listed in the aggregator's `KNOWN_NODES`. |
+| `NODE_KEY` | `dev-test-key` | This node's secret key. Must match this node's entry in the aggregator's `NODE_KEYS_JSON`. |
+| `COLLECTOR_URL` | `http://localhost:8000/api/events` | Full URL of the collector's `/api/events` endpoint. `stub_server.py` is on **5000**, the real collector on **8000**. |
+| `LOG_PATH` | `../cowrie-logs/cowrie.json` | Cowrie's JSON log. The default is relative to the working directory — set an absolute path. |
 
-`adapter.py` currently reads these from the environment directly (see "Running locally" below) — export them or pass them inline when running.
+`adapter.py` reads all of these from the environment, so a sensor is configured
+without editing code. Nothing loads `.env` for you here: this host is a separate
+machine with no `common` package, so source it yourself —
 
-`NODE_ID` is set at the top of `adapter.py` and should be changed per node (`node-01`, `node-02`, etc.) before running.
+```bash
+set -a; . ./.env; set +a
+python3 adapter.py
+```
+
+— or pass the values inline (see "Running locally" below). The aggregator's own
+configuration is a different file on a different machine; the only values that
+have to agree are `NODE_ID` and `NODE_KEY`.
 
 ## Running locally
 
@@ -97,7 +108,7 @@ Once Part 2's collector is live:
 
 1. Get the real collector URL and this node's real `NODE_KEY` from Part 2.
 2. Set `COLLECTOR_URL` and `NODE_KEY` to the real values (update `.env` or export them).
-3. Set `NODE_ID` in `adapter.py` to match this node's assigned ID.
+3. Set `NODE_ID` to match this node's assigned ID — in `.env`, not in `adapter.py`.
 4. Run the adapter the same way as in local testing — no code changes required, only configuration.
 5. Confirm with Part 2 that events are being correctly parsed and written to the `sessions`/`commands`/`nodes` tables, not just that the HTTP response is `200`.
 

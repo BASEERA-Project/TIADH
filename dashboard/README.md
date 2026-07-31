@@ -28,24 +28,32 @@ override it anywhere with `HONEYPOT_DB_PATH`.
 
 ## Configuration
 
-Every setting is an environment variable (`app/settings.py`):
+Every setting is an environment variable (`app/settings.py`), and the dashboard
+has no config file of its own. It reads the repository-root `.env` and
+`.env.secrets`, which `common/config.py` loads on import — the same two files
+the aggregator reads, which is what keeps them pointed at one database without
+any second setup step. An exported variable outranks the file.
 
 | Variable | Default | |
 |---|---|---|
-| `HONEYPOT_DB_PATH` | `common/src/common/honeypot_aggregator.db` | database to read |
+| `HONEYPOT_DB_PATH` | inside the installed `common` package | database to read |
 | `DASHBOARD_HOST` / `DASHBOARD_PORT` | `127.0.0.1` / `8050` | bind address |
-| `DASHBOARD_SECRET_KEY` | development fallback | set before exposing the app |
+| `DASHBOARD_SECRET_KEY` | development fallback | **`.env.secrets`** — set before exposing the app |
 | `DASHBOARD_REFRESH_SECONDS` | `30` | default auto-refresh; the header control overrides per browser |
 | `DASHBOARD_PAGE_SIZE` | `50` | table page size |
+| `DASHBOARD_ACTIVITY_HOURS` | `24` | hours covered by the Overview chart |
+| `DASHBOARD_APP_NAME` / `_SUBTITLE` | `TIADH` / … | header text |
 | `DASHBOARD_ALLOW_ALERT_ACTIONS` | `1` | `0` for strictly read-only |
-| `HEARTBEAT_INTERVAL_SECONDS` | `60` | contract heartbeat interval |
 | `DASHBOARD_HEARTBEAT_WARN_MISSED` / `_CRIT_MISSED` | `2` / `5` | amber and red thresholds |
 
-Detection thresholds are **not** listed here on purpose. They belong to
-`common/config.py`, and the rules panel reads them live so it always shows what
-the engine is using. Anything schema-shaped belongs to `common/db/`, the feed
-format to `common/export/`, and the rules to `common/alerting/` — the dashboard
-imports those, never `core/`.
+`HEARTBEAT_INTERVAL_SECONDS` is **not** in that list any more. It is a Baseline
+v1.3 contract value, not a dashboard preference, so it lives in
+`common/config.py` — where the sweeper's offline timeout is derived from it —
+and the dashboard reads it from there. Detection thresholds are absent for the
+same reason: the rules panel reads them live so it always shows what the engine
+is using. Anything schema-shaped belongs to `common/db/`, the feed format to
+`common/export/`, and the rules to `common/alerting/` — the dashboard imports
+those, never `core/`.
 
 It binds to loopback by default. `--host 0.0.0.0` exposes attacker data and the
 outbound feed to the network; set `DASHBOARD_SECRET_KEY` if you do.

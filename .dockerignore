@@ -13,4 +13,5 @@
 .git
 .gitignore
 **/.env
+**/.env.secrets
 **/demo

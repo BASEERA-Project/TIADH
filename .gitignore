@@ -152,7 +152,10 @@ activemq-data/
 *.sage.py
 
 # Environments
+# `.env.example` and `.env.secrets.example` are the committed templates; the
+# files they are copied to are local and must never be tracked.
 .env
+.env.secrets
 .envrc
 .venv
 env/

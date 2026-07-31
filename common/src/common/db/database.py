@@ -1740,6 +1740,21 @@ def get_db(read_only: bool = False) -> Database:
     return _default
 
 
+def set_db(db: Database) -> Database:
+    """
+    Install ``db`` as the process-wide handle that ``get_db()`` hands back.
+
+    Only matters when several components share one process: ``core/main.py
+    serve`` runs the collector, the enricher and the alert cycle as threads and
+    calls this so all three land on the same handle instead of opening three.
+    One handle means one ``_write_lock`` — writes queue in memory rather than
+    colliding on SQLite's file lock and spending the busy timeout.
+    """
+    global _default
+    _default = db
+    return db
+
+
 def init_db(path: Path | str = None) -> Database:
     """Create the database file and schema, then hand back the handle."""
     db = Database(path=path) if path else get_db()

@@ -67,8 +67,12 @@ class Settings:
     # -- node health ------------------------------------------------------
     #: Baseline v1.3 heartbeat interval. Node health is expressed in *missed
     #: heartbeats* rather than raw seconds, because that is the number an
-    #: assessor can check against the contract.
-    HEARTBEAT_INTERVAL_SECONDS = _int("HEARTBEAT_INTERVAL_SECONDS", 60)
+    #: assessor can check against the contract. The value itself belongs to the
+    #: contract, so it is read from common.config rather than defaulted here —
+    #: the sweeper's offline timeout is derived from the same number.
+    HEARTBEAT_INTERVAL_SECONDS = _int(
+        "HEARTBEAT_INTERVAL_SECONDS", core_config.HEARTBEAT_INTERVAL_SECONDS
+    )
     HEARTBEAT_WARN_MISSED = _int("DASHBOARD_HEARTBEAT_WARN_MISSED", 2)
     HEARTBEAT_CRIT_MISSED = _int("DASHBOARD_HEARTBEAT_CRIT_MISSED", 5)
 
