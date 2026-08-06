@@ -3,6 +3,11 @@ services:
     image: cowrie/cowrie:latest
     container_name: cowrie-node02
     restart: unless-stopped
+    # Cowrie writes its logs, uuid and host keys into the two bind mounts below.
+    # The image's own user is uid 999, which cannot write to host directories
+    # owned by the account that cloned this repo, so run as that account instead.
+    # Override COWRIE_UID/COWRIE_GID in .env if this host's user isn't 1000.
+    user: "${COWRIE_UID:-1000}:${COWRIE_GID:-1000}"
     ports:
       - "2222:2222"
     volumes:

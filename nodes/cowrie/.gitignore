@@ -4,3 +4,11 @@ __pycache__/
 *.pyc
 pending_events.jsonl
 adapter-logs/
+
+# Cowrie's runtime output: logs, host keys, uuid, downloads and TTY recordings.
+# The directories themselves are tracked (see .gitkeep) so that Docker doesn't
+# create them as root on a fresh clone, but nothing inside them belongs in git.
+cowrie-logs/*
+cowrie-data/*
+!cowrie-logs/.gitkeep
+!cowrie-data/.gitkeep
