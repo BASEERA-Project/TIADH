@@ -4,7 +4,7 @@ Lives at `core/collector/` and is part of the `core` uv project, alongside the
 CLI (`core/main.py`) and the enricher (`core/enricher/`). It has no environment
 of its own: `uv sync` in `core/` installs everything it needs.
 
-**In a deployment you do not start this on its own.** `uv run python main.py
+**In a deployment you do not start this on its own.** `uv run main.py
 serve` from `core/` runs the collector, the enricher and the alert/export cycle
 in one process against one database handle — see the root README. The uvicorn
 command below is still the right thing for working on the collector by itself,
@@ -42,7 +42,7 @@ loop (`mark_stale_nodes_offline` + `close_stale_sessions`) on a 60-second timer.
 |---|---|
 | Python 3.12+ and `uv` | |
 | `uv sync` run in `core/` | Installs the collector, the enricher, the CLI and the shared `common` package into one environment |
-| An initialised schema | Run `uv run python main.py init` in `core/` once, before first start |
+| An initialised schema | Run `uv run main.py init` in `core/` once, before first start |
 | Shared database path | Every part must point `HONEYPOT_DB_PATH` at the **same file** |
 
 ---
@@ -54,7 +54,7 @@ loop (`mark_stale_nodes_offline` + `close_stale_sessions`) on a 60-second timer.
 ```bash
 cd core
 uv sync
-uv run python main.py init
+uv run main.py init
 ```
 
 ### 2. Configure
@@ -83,7 +83,7 @@ uv run uvicorn --app-dir collector app.main:app --reload
 
 Open `http://127.0.0.1:8000/docs` to test the API interactively. For the
 deployed shape — collector plus enricher plus alert/export cycle — use
-`uv run python main.py serve` instead.
+`uv run main.py serve` instead.
 
 ---
 

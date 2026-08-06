@@ -51,9 +51,9 @@ timer alongside the collector and the enricher.
 | Process | Host | Command (from) | Port |
 |---|---|---|---|
 | **Cowrie honeypot** | sensor | `docker compose up -d` (`nodes/cowrie/`) | 2222 |
-| **Node adapter** | sensor | `python3 adapter.py` (`nodes/cowrie/`) | — |
-| **Aggregator** | aggregator | `uv run python main.py serve` (`core/`) | 8000 |
-| **Dashboard** | aggregator | `uv run python main.py` (`dashboard/`) | 8050 |
+| **Node adapter** | sensor | `uv run adapter.py` (`nodes/cowrie/`) | — |
+| **Aggregator** | aggregator | `uv run main.py serve` (`core/`) | 8000 |
+| **Dashboard** | aggregator | `uv run main.py` (`dashboard/`) | 8050 |
 
 What each one actually does:
 
@@ -109,8 +109,8 @@ No sensors, no collector — the fastest way to see every screen populated:
 ```bash
 cd dashboard
 uv sync
-uv run python tools/seed_demo.py            # a day of realistic traffic
-uv run python main.py --db demo/honeypot_demo.db
+uv run tools/seed_demo.py            # a day of realistic traffic
+uv run main.py --db demo/honeypot_demo.db
 ```
 
 Then open <http://127.0.0.1:8050>. The alerts on screen were produced by the
@@ -126,7 +126,7 @@ cp .env.example .env                        # from the repository root
 cp .env.secrets.example .env.secrets        # then set real node keys
 cd core
 uv sync
-uv run python main.py serve
+uv run main.py serve
 ```
 
 It creates the schema on first start, so there is no separate init step, and it
@@ -138,7 +138,7 @@ therefore the same database — no second configuration step:
 ```bash
 cd dashboard
 uv sync
-uv run python main.py
+uv run main.py
 ```
 
 **3. On each sensor host**, run Cowrie and the adapter:
@@ -147,8 +147,8 @@ uv run python main.py
 cd nodes/cowrie
 cp .env.example .env                        # set COLLECTOR_URL and NODE_KEY
 docker compose up -d                        # Cowrie on :2222
-pip install -r requirements.txt
-COLLECTOR_URL=http://<aggregator>:8000/api/events NODE_KEY=<this node's key> python3 adapter.py
+uv sync --no-dev                            # --no-dev: skip the stub collector's Flask
+COLLECTOR_URL=http://<aggregator>:8000/api/events NODE_KEY=<this node's key> uv run adapter.py
 ```
 
 Confirm the loop closed: `ssh -p 2222 root@<sensor>` from anywhere, then watch
@@ -161,8 +161,8 @@ point, which is what you want when you are working on one of them:
 
 ```bash
 cd core && uv run uvicorn --app-dir collector app.main:app --reload
-cd core && uv run python enricher/enrich.py
-cd core && uv run python main.py watch --interval 30
+cd core && uv run enricher/enrich.py
+cd core && uv run main.py watch --interval 30
 ```
 
 `watch` is `serve` without the collector and the enricher — it *does* run the
@@ -209,7 +209,7 @@ Secrets are split out so the main template stays boring enough to commit and
 per-run overrides, `--db`, and Docker's `environment:` block working:
 
 ```bash
-FEED_MIN_SEVERITY=high uv run python main.py serve     # wins over .env
+FEED_MIN_SEVERITY=high uv run main.py serve     # wins over .env
 ```
 
 The files are parsed as data rather than sourced by the shell, so values with
@@ -273,6 +273,7 @@ core/       the aggregator — one uv project, one process in deployment
 dashboard/  Flask read model over the database (Part 5)
 nodes/      sensor deployment (Part 1)
   cowrie/              docker-compose, adapter, validator, stub collector
+                       its own uv project — no `common`, it runs on another host
 ```
 
 `common` is the only package the others depend on, and it depends on nothing

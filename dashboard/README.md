@@ -7,8 +7,8 @@ chart.
 ```bash
 cd dashboard
 uv sync
-uv run python tools/seed_demo.py          # optional: generate a day of demo traffic
-uv run python main.py --db demo/honeypot_demo.db
+uv run tools/seed_demo.py          # optional: generate a day of demo traffic
+uv run main.py --db demo/honeypot_demo.db
 ```
 
 Then open <http://127.0.0.1:8050>. Without `--db` it reads the shared database at
@@ -64,8 +64,8 @@ outbound feed to the network; set `DASHBOARD_SECRET_KEY` if you do.
 without `--force`, so it cannot disturb collected data.
 
 ```bash
-uv run python tools/seed_demo.py --hours 24 --attackers 42
-uv run python tools/seed_demo.py --force            # regenerate
+uv run tools/seed_demo.py --hours 24 --attackers 42
+uv run tools/seed_demo.py --force            # regenerate
 ```
 
 It generates scanners, brute force, credential spraying, three attackers who get

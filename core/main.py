@@ -213,7 +213,7 @@ def cmd_serve(args, db: Database) -> int:
     0.0.0.0 because the sensors are remote, while the dashboard binds loopback
     because it renders attacker data. It also has to run alone against a demo
     database, and restarting a viewer should never interrupt ingestion. Run it
-    with `cd dashboard && uv run python main.py`.
+    with `cd dashboard && uv run main.py`.
     """
     import uvicorn  # local: no other command in this CLI needs a web server
 
@@ -274,7 +274,7 @@ def cmd_serve(args, db: Database) -> int:
 
     log.info("database %s", db.path)
     log.info("alert/export cycle every %ss (housekeeping is the collector's)", args.interval)
-    log.info("dashboard is a separate command: cd dashboard && uv run python main.py")
+    log.info("dashboard is a separate command: cd dashboard && uv run main.py")
 
     # log_config=None keeps uvicorn from installing its own handlers, so its
     # logs and ours come out of one root logger in one format.
