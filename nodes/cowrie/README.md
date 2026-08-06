@@ -57,6 +57,20 @@ them as `root` on a fresh clone, which would cause the same failure. If you hit
 that error anyway, the directories are owned by the wrong user — check
 `ls -ld cowrie-logs cowrie-data` against `id -u`.
 
+`cowrie-data/` also keeps three empty subdirectories — `tty/`, `downloads/` and
+`snapshots/`. Cowrie expects them to exist and does not create them, and mounting
+`cowrie-data/` over `var/lib/cowrie` hides the ones baked into the image. Without
+them the honeypot starts and accepts logins, but every session dies the moment a
+shell opens:
+
+```
+[twisted.conch.ssh.session#critical] Error getting shell
+builtins.FileNotFoundError: [Errno 2] No such file or directory: 'var/lib/cowrie/tty/...log'
+```
+
+Don't delete them. Their contents — session recordings and malware Cowrie
+captured — are ignored by git, but the empty directories themselves are tracked.
+
 `adapter.py` reads all of these from the environment, so a sensor is configured
 without editing code. Nothing loads `.env` for you here: this host is a separate
 machine with no `common` package, so source it yourself —
