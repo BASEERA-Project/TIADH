@@ -148,7 +148,7 @@ cd nodes/cowrie
 cp .env.example .env                        # set COLLECTOR_URL and NODE_KEY
 docker compose up -d                        # Cowrie on :2222
 uv sync --no-dev                            # --no-dev: skip the stub collector's Flask
-COLLECTOR_URL=http://<aggregator>:8000/api/events NODE_KEY=<this node's key> uv run adapter.py
+uv run adapter.py                           # reads the .env beside it
 ```
 
 Confirm the loop closed: `ssh -p 2222 root@<sensor>` from anywhere, then watch
@@ -247,11 +247,18 @@ engine is using.
 
 ### Sensor hosts
 
-A sensor is a different machine and `adapter.py` is a standalone script with no
-`common` package, so nothing loads a file for it — `nodes/cowrie/.env.example`
-is copied and sourced the old way. Only two values have to agree with the
-aggregator: `NODE_ID` must appear in `KNOWN_NODES`, and `NODE_KEY` must match
-that node's entry in `NODE_KEYS_JSON`.
+A sensor is a different machine with no `common` package, so it configures
+itself: copy `nodes/cowrie/.env.example` to `.env` and `adapter.py` loads it via
+python-dotenv, with the same precedence as here — a real environment variable
+beats the file.
+
+It loads that file **by name, from its own directory**, never by searching
+upwards. On a machine with the whole repository checked out, an upward search
+would climb out of `nodes/cowrie/` and find this aggregator `.env` instead,
+which configures a different host entirely.
+
+Only two values have to agree with the aggregator: `NODE_ID` must appear in
+`KNOWN_NODES`, and `NODE_KEY` must match that node's entry in `NODE_KEYS_JSON`.
 
 ---
 

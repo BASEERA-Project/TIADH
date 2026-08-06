@@ -7,6 +7,10 @@ requires-python = ">=3.12"
 dependencies = [
     # adapter.py POSTs batches to the collector over HTTPS.
     "requests>=2.31",
+    # adapter.py reads this node's settings from nodes/cowrie/.env. The
+    # aggregator gets the same behaviour from common/config.py, which a sensor
+    # host does not have.
+    "python-dotenv>=1.0",
 ]
 
 [dependency-groups]
