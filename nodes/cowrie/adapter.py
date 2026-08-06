@@ -6,14 +6,27 @@ import threading
 import os
 import requests
 import queue
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Read nodes/cowrie/.env by explicit path, not dotenv's default upward search.
+# The search would walk out of this directory and, on a machine that has the
+# whole repository checked out, reach the aggregator's own root .env — a
+# different host's configuration entirely. A sensor is configured by the file
+# next to this script or not at all.
+#
+# override=False (the default) leaves a real environment variable outranking
+# the file, which is how common/config.py treats the aggregator's .env, and is
+# what makes `NODE_KEY=... uv run adapter.py` still work.
+load_dotenv(Path(__file__).with_name(".env"))
 
 # All four come from the environment (see .env.example) so the same file runs
 # on every sensor. NODE_ID must appear in the collector's KNOWN_NODES, and
 # NODE_KEY must match that node's entry in the collector's NODE_KEYS_JSON.
 #
 # This host is a different machine from the aggregator, so it does not share
-# the aggregator's .env — and it has no `common` package to load one. Export
-# these, or put them in nodes/cowrie/.env and source it.
+# the aggregator's .env and has no `common` package to load one — which is why
+# the loading above is done here rather than inherited from `common.config`.
 NODE_ID = os.environ.get("NODE_ID", "node-02")
 LOG_PATH = os.environ.get("LOG_PATH", "../cowrie-logs/cowrie.json")
 PROTOCOL = os.environ.get("PROTOCOL", "ssh")

@@ -72,17 +72,27 @@ Don't delete them. Their contents — session recordings and malware Cowrie
 captured — are ignored by git, but the empty directories themselves are tracked.
 
 `adapter.py` reads all of these from the environment, so a sensor is configured
-without editing code. Nothing loads `.env` for you here: this host is a separate
-machine with no `common` package, so source it yourself —
+without editing code, and it loads `.env` itself — nothing to source:
 
 ```bash
-set -a; . ./.env; set +a
+cp .env.example .env        # fill in COLLECTOR_URL and NODE_KEY
 uv run adapter.py
 ```
 
-— or pass the values inline (see "Running locally" below). The aggregator's own
-configuration is a different file on a different machine; the only values that
-have to agree are `NODE_ID` and `NODE_KEY`.
+A real environment variable still outranks the file, so you can override one
+value for one run without editing anything:
+
+```bash
+NODE_KEY=some-other-key uv run adapter.py
+```
+
+It loads the `.env` sitting next to `adapter.py`, named explicitly rather than
+searched for. That matters on a machine with the whole repository checked out:
+python-dotenv's default is to walk *up* the directory tree, which from here
+finds the **aggregator's** root `.env` — a different host's configuration, with
+`KNOWN_NODES`, database paths and the rest. A sensor is configured by the file
+beside it or not at all. The only values that have to agree with the aggregator
+are `NODE_ID` and `NODE_KEY`.
 
 ## Running locally
 
@@ -94,9 +104,9 @@ uv sync
 ```
 That creates `.venv/` and installs the pinned versions from `uv.lock` — no
 virtualenv to activate, because every command below runs through `uv run`.
-Only `requests` is needed to ship events; Flask is a `dev` dependency, because
-the sole thing that uses it is the stub collector. On a real sensor host, where
-there is nothing to stub, install without it:
+Shipping events needs only `requests` and `python-dotenv`; Flask is a `dev`
+dependency, because the sole thing that uses it is the stub collector. On a real
+sensor host, where there is nothing to stub, install without it:
 
 ```bash
 uv sync --no-dev
@@ -117,7 +127,9 @@ nc -vz localhost 2222
 uv run stub_server.py
 ```
 
-**4. Start the adapter** (in another terminal):
+**4. Start the adapter** (in another terminal). The stub listens on 5000 while
+`.env` points at the real collector on 8000, so override that one value for this
+run — inline variables outrank the file:
 ```bash
 COLLECTOR_URL=http://localhost:5000/api/events NODE_KEY=dev-test-key uv run adapter.py
 ```
