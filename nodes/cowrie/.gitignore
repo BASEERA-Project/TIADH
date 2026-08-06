@@ -4,3 +4,23 @@ __pycache__/
 *.pyc
 pending_events.jsonl
 adapter-logs/
+
+# Cowrie's runtime output: logs, host keys, uuid, downloads and TTY recordings.
+# The empty directory skeleton is tracked (see the .gitkeep files) for two
+# reasons: Docker would otherwise create these paths as root on a fresh clone,
+# and Cowrie does not create tty/, downloads/ or snapshots/ itself — it expects
+# the ones baked into the image, which the bind mount hides. Contents are
+# ignored; nothing Cowrie writes belongs in git.
+cowrie-logs/*
+cowrie-data/*
+!cowrie-logs/.gitkeep
+!cowrie-data/.gitkeep
+!cowrie-data/downloads/
+!cowrie-data/snapshots/
+!cowrie-data/tty/
+cowrie-data/downloads/*
+cowrie-data/snapshots/*
+cowrie-data/tty/*
+!cowrie-data/downloads/.gitkeep
+!cowrie-data/snapshots/.gitkeep
+!cowrie-data/tty/.gitkeep

@@ -40,6 +40,36 @@ cp .env.example .env
 | `NODE_KEY` | `dev-test-key` | This node's secret key. Must match this node's entry in the aggregator's `NODE_KEYS_JSON`. |
 | `COLLECTOR_URL` | `http://localhost:8000/api/events` | Full URL of the collector's `/api/events` endpoint. `stub_server.py` is on **5000**, the real collector on **8000**. |
 | `LOG_PATH` | `../cowrie-logs/cowrie.json` | Cowrie's JSON log. The default is relative to the working directory — set an absolute path. |
+| `COWRIE_UID` / `COWRIE_GID` | `1000` / `1000` | The user the Cowrie **container** runs as. Read by `docker-compose.yml`, not by `adapter.py`. Only set these if this host's account isn't `1000` (`id -u`). |
+
+`cowrie-logs/` and `cowrie-data/` are bind-mounted into the container, and Cowrie
+writes its JSON log, sensor `uuid` and SSH host keys into them. The image's own
+user is uid 999, which cannot write to directories owned by the account that
+cloned this repo, so the container runs as `COWRIE_UID:COWRIE_GID` instead —
+otherwise Cowrie exits at startup with:
+
+```
+"Permission denied when attempting to write uuid to var/lib/cowrie/uuid"
+```
+
+Both directories are tracked (with a `.gitkeep`) so that Docker doesn't create
+them as `root` on a fresh clone, which would cause the same failure. If you hit
+that error anyway, the directories are owned by the wrong user — check
+`ls -ld cowrie-logs cowrie-data` against `id -u`.
+
+`cowrie-data/` also keeps three empty subdirectories — `tty/`, `downloads/` and
+`snapshots/`. Cowrie expects them to exist and does not create them, and mounting
+`cowrie-data/` over `var/lib/cowrie` hides the ones baked into the image. Without
+them the honeypot starts and accepts logins, but every session dies the moment a
+shell opens:
+
+```
+[twisted.conch.ssh.session#critical] Error getting shell
+builtins.FileNotFoundError: [Errno 2] No such file or directory: 'var/lib/cowrie/tty/...log'
+```
+
+Don't delete them. Their contents — session recordings and malware Cowrie
+captured — are ignored by git, but the empty directories themselves are tracked.
 
 `adapter.py` reads all of these from the environment, so a sensor is configured
 without editing code. Nothing loads `.env` for you here: this host is a separate
