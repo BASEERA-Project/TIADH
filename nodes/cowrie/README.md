@@ -23,7 +23,7 @@ Cowrie (Docker) → cowrie.json → adapter.py (tail + transform) → HTTPS POST
 | `adapter.py` | Tails Cowrie's logs, maps them to the shared event format, batches and ships them, with retry on failure |
 | `validator.py` | Checks a batch of events against the shared schema (required fields, allowed event types, allowed `details` keys) |
 | `stub_server.py` | Minimal local Flask server standing in for Part 2's real collector, for local testing |
-| `requirements.txt` | Python dependencies |
+| `pyproject.toml` / `uv.lock` | Python dependencies, pinned. This is a uv project like `core/` and `dashboard/` |
 | `.env.example` | Template for required environment variables |
 
 ## Configuration
@@ -77,7 +77,7 @@ machine with no `common` package, so source it yourself —
 
 ```bash
 set -a; . ./.env; set +a
-python3 adapter.py
+uv run adapter.py
 ```
 
 — or pass the values inline (see "Running locally" below). The aggregator's own
@@ -90,9 +90,16 @@ This part can be run and tested entirely on a local machine, without any AWS set
 
 **1. Set up the environment:**
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+uv sync
+```
+That creates `.venv/` and installs the pinned versions from `uv.lock` — no
+virtualenv to activate, because every command below runs through `uv run`.
+Only `requests` is needed to ship events; Flask is a `dev` dependency, because
+the sole thing that uses it is the stub collector. On a real sensor host, where
+there is nothing to stub, install without it:
+
+```bash
+uv sync --no-dev
 ```
 
 **2. Start Cowrie:**
@@ -107,12 +114,12 @@ nc -vz localhost 2222
 
 **3. Start the stub collector** (in its own terminal):
 ```bash
-python3 stub_server.py
+uv run stub_server.py
 ```
 
 **4. Start the adapter** (in another terminal):
 ```bash
-COLLECTOR_URL=http://localhost:5000/api/events NODE_KEY=dev-test-key python3 adapter.py
+COLLECTOR_URL=http://localhost:5000/api/events NODE_KEY=dev-test-key uv run adapter.py
 ```
 
 **5. Generate a test event** (in a third terminal):
@@ -126,7 +133,7 @@ Any username/password will be accepted by Cowrie's default policy.
 - The stub server's terminal should print the received event(s)
 - Raw Cowrie logs are in `cowrie-logs/cowrie.json`; validate a batch of shipped events with:
 ```bash
-python3 validator.py pending_events.jsonl
+uv run validator.py pending_events.jsonl
 ```
 (only present if a send has failed at least once — see below to force this)
 

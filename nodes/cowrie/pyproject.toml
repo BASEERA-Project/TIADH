@@ -1,0 +1,18 @@
+[project]
+name = "cowrie-node"
+version = "0.1.0"
+description = "Honeypot sensor: ships Cowrie's events to the aggregator's collector"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # adapter.py POSTs batches to the collector over HTTPS.
+    "requests>=2.31",
+]
+
+[dependency-groups]
+# stub_server.py stands in for the collector when testing a sensor on its own.
+# uv installs this group by default, so local testing needs no extra flag; a
+# real sensor host uses `uv sync --no-dev` and never installs Flask.
+dev = [
+    "flask>=3.1",
+]
