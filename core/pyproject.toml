@@ -6,7 +6,8 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "common",
-    # enricher/enrich.py geolocates attacker IPs over HTTP (ip-api.com).
+    # enricher/enrich.py geolocates attacker IPs over HTTP (ip-api.com) and
+    # scores them against AbuseIPDB.
     "requests>=2.31",
     # collector/ — the FastAPI service the honeypot nodes ship events to.
     "fastapi>=0.115,<1.0",

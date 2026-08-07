@@ -183,6 +183,21 @@ NODE_OFFLINE_AFTER_SECONDS = int(
 SESSION_STALE_AFTER_SECONDS = int(os.getenv("SESSION_STALE_AFTER_SECONDS", "3600"))
 
 # --------------------------------------------------------------------------
+# Threat intelligence enrichment
+# --------------------------------------------------------------------------
+
+#: AbuseIPDB key for the enricher's abuse-score lookup. Secret, so it belongs in
+#: `.env.secrets`; free keys come from https://www.abuseipdb.com/account/api.
+#: Leaving it unset is a supported mode, not an error — the enricher then
+#: records geolocation and the local profile score and leaves `abuse_score`
+#: NULL, which `high_risk_ip` reads as "unknown" rather than as a clean score.
+ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY", "").strip()
+
+#: How far back AbuseIPDB aggregates complaints when scoring an address. Their
+#: free tier caps this at 365; 90 keeps the score current enough to act on.
+ABUSEIPDB_MAX_AGE_DAYS = int(os.getenv("ABUSEIPDB_MAX_AGE_DAYS", "90"))
+
+# --------------------------------------------------------------------------
 # Alerting thresholds
 # --------------------------------------------------------------------------
 

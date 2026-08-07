@@ -67,8 +67,9 @@ What each one actually does:
     (stale nodes offline, abandoned sessions closed) every 60s, because it is
     the only always-running writer.
   - *enricher* — polls `get_ips_needing_enrichment()` every 30s, geolocates each
-    IP, computes a local profile score from that IP's own session and command
-    history, and upserts a `reputation` row.
+    IP (ip-api.com), scores it against AbuseIPDB, computes a local profile score
+    from that IP's own session and command history, and upserts a `reputation`
+    row. The AbuseIPDB half is skipped when no key is configured.
   - *alerts + feed export* — re-evaluates the seven detection rules over a
     rolling window, writes deduplicated alerts, and rewrites the exported feed
     files.
@@ -242,7 +243,7 @@ engine is using.
 | `--host` / `--port` | `0.0.0.0` / `8000` | Collector bind address — the sensors are remote |
 | `--interval` | `30` | Seconds between alert/export cycles |
 | `--enrich-interval` | `30` | Seconds between enrichment passes |
-| `--no-enricher` | off | Skip the enricher — it calls ip-api.com, so use this offline |
+| `--no-enricher` | off | Skip the enricher — it calls ip-api.com and AbuseIPDB, so use this offline |
 | `--window`, `--min-severity` | from `common/config.py` | Per-run overrides |
 
 ### Sensor hosts
@@ -307,13 +308,18 @@ Things that will bite during a deployment, all of them real as of this commit:
 - **`NODE_ID` defaults to `node-02`.** It is an environment variable now, but
   the default is a real node ID rather than an error, so a sensor started
   without one silently claims to be node-02.
-- **The enricher's abuse score is a constant.** `enrich.py` sets
-  `mock_external_abuse = 45` for every IP; only the geolocation (ip-api.com)
-  and the locally computed profile score are real. Any rule keyed on
-  `abuse_score` is therefore firing on a placeholder.
-- **ip-api.com rate-limits to 45 requests a minute** on the free tier. A burst
-  of new attacker IPs will start failing lookups; the enricher falls back to a
-  null record and retries on the next pass.
+- **The abuse score needs a key to exist at all.** `abuse_score` is now a real
+  AbuseIPDB lookup, but with no `ABUSEIPDB_API_KEY` set the enricher leaves the
+  column NULL — geolocation and the local profile score still work, and
+  `high_risk_ip` then fires on the profile score alone. The enricher says so in
+  its log, once, at startup.
+- **ip-api.com rate-limits to 45 requests a minute** on the free tier, and
+  AbuseIPDB's to 1000 checks a day. A burst of new attacker IPs will start
+  failing lookups. A failed lookup is written as NULL and never as a score of
+  zero — but it is still written, on a fresh `last_updated`, so
+  `get_ips_needing_enrichment()` will not offer that IP again until the row ages
+  past `max_age_days` (7). An IP enriched during an outage keeps its gaps for a
+  week unless you clear its `reputation` row.
 - **One collector test fails.** `test_rejects_bad_command_contract` expects a
   malformed event to return HTTP 200 with `rejected: 1`, but `app/models.py`
   still validates the `details` contract in the HTTP layer and returns 422.

@@ -493,7 +493,10 @@ class Database:
         only what you have, and existing values survive.
 
         `source` accumulates: passing 'AbuseIPDB' to a row that already says
-        'GeoLite2' yields 'GeoLite2,AbuseIPDB'.
+        'GeoLite2' yields 'GeoLite2,AbuseIPDB'. It is merged token by token, so
+        a caller may pass either one provider or the whole comma-separated set
+        it used this pass ('ip-api,AbuseIPDB') — the enricher does the latter,
+        because which providers answered varies from pass to pass.
         """
         with self.transaction() as conn:
             existing = conn.execute(
@@ -503,8 +506,10 @@ class Database:
             merged_source = source
             if existing and existing["source"]:
                 known = [s for s in existing["source"].split(",") if s]
-                if source and source not in known:
-                    known.append(source)
+                for token in (source or "").split(","):
+                    token = token.strip()
+                    if token and token not in known:
+                        known.append(token)
                 merged_source = ",".join(known)
 
             conn.execute(

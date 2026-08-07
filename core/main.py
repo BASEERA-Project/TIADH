@@ -370,7 +370,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--enrich-interval", type=int, default=30,
                          help="seconds between enrichment passes")
     p_serve.add_argument("--no-enricher", action="store_true",
-                         help="skip the enricher (it calls ip-api.com — use offline)")
+                         help="skip the enricher (it calls ip-api.com and AbuseIPDB — use offline)")
     p_serve.add_argument("--window", type=int, help="alert lookback in minutes")
     p_serve.add_argument("--min-severity", choices=["low", "medium", "high"])
     p_serve.set_defaults(func=cmd_serve)

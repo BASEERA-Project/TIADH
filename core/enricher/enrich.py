@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 # Part 4's central Database API, now an installed package rather than a
 # sibling directory, so the import can no longer fail.
+from common import config
 from common.db.database import Database
 
 # Logging rather than print: this module runs standalone *and* as a thread
@@ -15,6 +16,74 @@ log = logging.getLogger("enricher")
 
 # Global cache dictionary to prevent API rate-limiting[cite: 1]
 IP_CACHE = {}
+
+#: AbuseIPDB's reputation endpoint — the real external abuse score, replacing
+#: the constant this module used to report for every IP[cite: 1, 3].
+ABUSEIPDB_URL = "https://api.abuseipdb.com/api/v2/check"
+
+#: A missing or rejected key is one deployment fact, not one fact per address,
+#: and the worker revisits every stale IP on every pass — so it is logged once.
+_abuse_key_warned = False
+
+def _fetch_abuse_score(ip_address):
+    """
+    AbuseIPDB's 0-100 confidence score for one IP, or None if we did not get one.
+
+    None rather than 0, deliberately. `upsert_reputation` COALESCEs
+    `abuse_score`, so None leaves an earlier real score in place while 0 would
+    overwrite it — and 0 is *also* the honest answer for an address nobody has
+    ever reported. A rate limit or a missing key must not be recorded as
+    "this address is clean", because `high_risk_ip` reads that column[cite: 3].
+    """
+    global _abuse_key_warned
+
+    if not config.ABUSEIPDB_API_KEY:
+        if not _abuse_key_warned:
+            log.warning(
+                "ABUSEIPDB_API_KEY is not set — recording geolocation only; "
+                "abuse_score stays null and the high_risk_ip rule sees nothing"
+            )
+            _abuse_key_warned = True
+        return None
+
+    try:
+        response = requests.get(
+            ABUSEIPDB_URL,
+            headers={"Key": config.ABUSEIPDB_API_KEY, "Accept": "application/json"},
+            params={
+                "ipAddress": ip_address,
+                "maxAgeInDays": config.ABUSEIPDB_MAX_AGE_DAYS,
+            },
+            timeout=5,
+        )
+
+        if response.status_code == 200:
+            return int(response.json()["data"]["abuseConfidenceScore"])
+
+        if response.status_code == 429:
+            # Free tier is 1000 checks/day. The geolocation half of the record
+            # is still written, which means this IP keeps a null abuse_score
+            # until its reputation row ages past `max_age_days` and the worker
+            # offers it up again — the quota resets long before that.
+            log.warning("AbuseIPDB quota exhausted — no score for %s", ip_address)
+        elif response.status_code in (401, 403):
+            if not _abuse_key_warned:
+                log.warning(
+                    "AbuseIPDB rejected ABUSEIPDB_API_KEY (HTTP %d) — "
+                    "abuse_score stays null until the key is fixed",
+                    response.status_code,
+                )
+                _abuse_key_warned = True
+        else:
+            log.warning(
+                "AbuseIPDB returned HTTP %d for %s", response.status_code, ip_address
+            )
+    except Exception as e:
+        # Includes the malformed-payload case: a 200 whose JSON does not carry
+        # data.abuseConfidenceScore is no more a score than a timeout is.
+        log.warning("AbuseIPDB lookup failed for %s: %s", ip_address, e)
+
+    return None
 
 def calculate_dynamic_profile_score(ip_address, external_abuse_score, db=None, db_path=None):
     """
@@ -82,13 +151,15 @@ def get_threat_intel(ip_address, db=None, db_path=None):
         data = response.json()
 
         if data.get("status") == "success":
-            # Simulate/calculate external abuse score (0-100)[cite: 1, 3]
-            mock_external_abuse = 45
+            # Real external abuse score (0-100), or None when AbuseIPDB had no
+            # answer for us — the scorer below reads None as "no contribution",
+            # so geolocation and profiling survive an AbuseIPDB outage[cite: 1, 3].
+            abuse_score = _fetch_abuse_score(ip_address)
 
             # Calculate team profiling score dynamically via Part 4 database metrics[cite: 1, 4]
             calculated_profile_score = calculate_dynamic_profile_score(
-                ip_address, 
-                mock_external_abuse, 
+                ip_address,
+                abuse_score,
                 db=db,
                 db_path=db_path
             )
@@ -99,12 +170,23 @@ def get_threat_intel(ip_address, db=None, db_path=None):
                 "city": data.get("city", None),
                 "latitude": data.get("lat", None),
                 "longitude": data.get("lon", None),
-                "abuse_score": mock_external_abuse,
-                "source": "ip-api / custom",
+                "abuse_score": abuse_score,
+                # Comma-separated providers, the form upsert_reputation merges
+                # on. AbuseIPDB is named only when it actually answered, so the
+                # column says where the row's data came from rather than where
+                # it was meant to come from.
+                "source": "ip-api,AbuseIPDB" if abuse_score is not None else "ip-api",
                 "profile_score": calculated_profile_score,
                 "last_updated": current_utc_time
             }
-            IP_CACHE[ip_address] = intel_record
+            # Complete records only. One whose AbuseIPDB half is missing because
+            # of a quota or an outage would otherwise be replayed from memory for
+            # the life of the process, outliving the outage that caused it;
+            # leaving it out costs one ip-api call the next time this IP comes
+            # round. With no key configured there is nothing to retry, so those
+            # records are cached as the finished article they are.
+            if abuse_score is not None or not config.ABUSEIPDB_API_KEY:
+                IP_CACHE[ip_address] = intel_record
             return intel_record
 
     except Exception as e:
