@@ -1,0 +1,64 @@
+services:
+  dashboard:
+    # The Flask read model, served by waitress: main.py's app factory, nothing
+    # of the aggregator's. It talks to core only through the database file, so
+    # this needs no network to the aggregator — just the same volume.
+    build:
+      context: ..               # repo root, so the Dockerfile can COPY common/ and dashboard/
+      dockerfile: dashboard/Dockerfile
+    # waitress installs no SIGTERM handler; PID 1 never receives a signal it has
+    # no handler for. Without this, `docker compose down` waits out the full
+    # 10-second grace period and then SIGKILLs.
+    init: true
+    # Published to loopback, deliberately. This page renders attacker IPs,
+    # session transcripts and the outbound feed, and the host's DASHBOARD_HOST
+    # default keeps that off the network until someone decides otherwise —
+    # containerising it should not quietly make that decision. To expose it,
+    # drop the 127.0.0.1 prefix and set DASHBOARD_SECRET_KEY first.
+    #
+    # Compose interpolates DASHBOARD_PORT from the shell, not from the
+    # repository-root .env — that file is kept out of the build context on
+    # purpose. Published and container port move together:
+    #   DASHBOARD_PORT=9050 docker compose up -d
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-8050}:${DASHBOARD_PORT:-8050}"
+    environment:
+      # The file core/docker-compose.yml writes, reached through the same
+      # volume. These two paths have to agree or the dashboard shows an empty
+      # setup screen while the collector happily ingests.
+      HONEYPOT_DB_PATH: /app/data/honeypot_aggregator.db
+      # DASHBOARD_HOST stays at the image's 0.0.0.0: inside the container's own
+      # network namespace, a loopback bind would make the mapping above
+      # unreachable. The loopback decision lives in `ports:`, one line up.
+      DASHBOARD_PORT: "${DASHBOARD_PORT:-8050}"
+      # Signs the session carrying the CSRF token for alert acknowledge/close.
+      # Unset falls back to the development key and the app logs a warning —
+      # fine behind loopback, not fine once the port above is published.
+      DASHBOARD_SECRET_KEY: "${DASHBOARD_SECRET_KEY:-}"
+      DASHBOARD_ALLOW_ALERT_ACTIONS: "1"
+      DASHBOARD_REFRESH_SECONDS: "30"
+    volumes:
+      # The aggregator's volume, and the reason this file exists: a dashboard
+      # container that does not mount it is not looking at the collected data.
+      #
+      # Not :ro — acknowledging and closing an alert is a real write. For a
+      # strictly read-only viewer, mount it `tiadh_db:/app/data:ro` and set
+      # DASHBOARD_ALLOW_ALERT_ACTIONS=0 so the buttons disappear rather than
+      # failing when pressed.
+      - tiadh_db:/app/data
+    healthcheck:
+      # python:3.12-slim has no curl, and there is no reason to add one to an
+      # image that already ships a Python that can make the request.
+      # /api/health returns 503 while the database is missing or unreadable, so
+      # an aggregator that has not created the schema yet shows up here as
+      # unhealthy instead of as an empty page someone has to interpret.
+      test: ["CMD", "python", "-c",
+             "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ['DASHBOARD_PORT'] + '/api/health', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  tiadh_db:
+    external: true   # Create once with: docker volume create tiadh_db

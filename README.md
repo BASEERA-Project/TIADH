@@ -52,8 +52,8 @@ timer alongside the collector and the enricher.
 |---|---|---|---|
 | **Cowrie honeypot** | sensor | `docker compose up -d` (`nodes/cowrie/`) | 2222 |
 | **Node adapter** | sensor | `uv run adapter.py` (`nodes/cowrie/`) | — |
-| **Aggregator** | aggregator | `uv run main.py serve` (`core/`) | 8000 |
-| **Dashboard** | aggregator | `uv run main.py` (`dashboard/`) | 8050 |
+| **Aggregator** | aggregator | `uv run main.py serve` (`core/`) — or `docker compose up -d` | 8000 |
+| **Dashboard** | aggregator | `uv run main.py` (`dashboard/`) — or `docker compose up -d` | 8050 |
 
 What each one actually does:
 
@@ -171,16 +171,39 @@ housekeeping sweep, because in that shape nothing else is.
 
 ### In Docker
 
-`core/Dockerfile` builds the whole aggregator and its `CMD` is `main.py serve`:
+Both halves are containerised, each with its own compose file. They share no
+network — only the `tiadh_db` volume, because the dashboard reads the database
+directly rather than calling the collector:
 
 ```bash
 docker volume create tiadh_db      # once — the shared database volume
-cd core
-docker compose up --build
+
+docker compose -f core/docker-compose.yml      up -d --build   # aggregator, on :8000
+docker compose -f dashboard/docker-compose.yml up -d --build   # dashboard, on 127.0.0.1:8050
 ```
 
-The dashboard, if you also containerise it, must mount that **same named
-volume** or it will not be looking at the same database.
+Order does not matter. `serve` creates the schema, and until it has, the
+dashboard shows its setup screen and reports unhealthy rather than an empty page.
+
+A dashboard container that does not mount that **same named volume** is not
+looking at the collected data — that mount is the whole integration.
+
+Two defaults change inside a container, both for the same reason and neither
+loosening anything:
+
+| | On the host | In the container | |
+|---|---|---|---|
+| `DASHBOARD_HOST` | `127.0.0.1` | `0.0.0.0` | a loopback bind inside the container's own network namespace would make the published port unreachable |
+| published port | — | `127.0.0.1:8050` | so the loopback decision moves to compose's `ports:` instead of being lost |
+
+To reach the dashboard from the lab network, drop the `127.0.0.1` prefix from
+`ports:` and set `DASHBOARD_SECRET_KEY` first — it signs the session carrying
+the CSRF token for the alert actions. Both compose files take `COLLECTOR_PORT` /
+`DASHBOARD_PORT` from the shell to move a port without a rebuild:
+
+```bash
+DASHBOARD_PORT=9050 docker compose up -d
+```
 
 `.env` and `.env.secrets` are excluded from the build context on purpose, so a
 container is configured by compose's `environment:` block (which outranks the
@@ -283,6 +306,7 @@ core/       the aggregator — one uv project, one process in deployment
   enricher/            geolocation + scoring worker (Part 3)
   Dockerfile           builds the whole aggregator; CMD is `main.py serve`
 dashboard/  Flask read model over the database (Part 5)
+  Dockerfile           the same read model behind waitress; mounts tiadh_db
 nodes/      sensor deployment (Part 1)
   cowrie/              docker-compose, adapter, validator, stub collector
                        its own uv project — no `common`, it runs on another host
