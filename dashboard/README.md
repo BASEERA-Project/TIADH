@@ -68,6 +68,19 @@ uv run tools/seed_demo.py --hours 24 --attackers 42
 uv run tools/seed_demo.py --force            # regenerate
 ```
 
+The seeder is in the image too, so a container-only setup can populate an empty
+`tiadh_db` without a host checkout:
+
+```bash
+docker compose run --rm --no-deps dashboard \
+  python tools/seed_demo.py --db /app/data/honeypot_aggregator.db
+```
+
+Only into an *empty* volume, though. Once `core/` has run, that path holds
+collected data and the seeder correctly refuses it — `--force` there would
+overwrite the real database, which is the one case where its refusal is the
+whole point.
+
 It generates scanners, brute force, credential spraying, three attackers who get
 in and run a payload, one sensor that goes quiet, and a few sessions still in
 progress. Two things make it honest rather than decorative:
@@ -94,6 +107,48 @@ uv run waitress-serve --call --host 127.0.0.1 --port 8050 app:create_app
 
 Threaded workers are safe — each request gets its own read-only handle and
 releases it on teardown.
+
+### In Docker
+
+`Dockerfile` runs exactly that waitress command, and `docker-compose.yml` mounts
+the aggregator's database volume:
+
+```bash
+docker volume create tiadh_db      # once, shared with core/ — skip if it exists
+docker compose up -d --build
+```
+
+Then open <http://127.0.0.1:8050>. The build context is the repository root, not
+this directory, because the image needs the sibling `common` package.
+
+Mounting `tiadh_db` **is** the integration: it is the only thing connecting this
+container to `core/`, which reaches it through the same volume at the same path.
+There is no network between them. A container without that mount starts fine and
+shows the setup screen, because it is reading a database nobody writes.
+
+Three things differ from a host run, all of them in the container layer rather
+than in the app:
+
+* **`DASHBOARD_HOST` defaults to `0.0.0.0`.** Not a relaxed posture — inside the
+  container's own network namespace a loopback bind would make the published
+  port unreachable. The loopback default moves outward to compose, which
+  publishes to `127.0.0.1:8050`, so putting this on the lab network is still
+  something you type. Set `DASHBOARD_SECRET_KEY` when you do.
+* **`init: true`.** waitress installs no SIGTERM handler, and the kernel does not
+  deliver a default-disposition signal to PID 1, so without an init `docker
+  compose down` waits out the full grace period and then SIGKILLs.
+* **The volume is mounted read-write.** Acknowledging and closing an alert is a
+  real write. For a strictly read-only viewer, mount it `:ro` and set
+  `DASHBOARD_ALLOW_ALERT_ACTIONS=0` so the buttons disappear rather than fail
+  when pressed.
+
+The healthcheck is `/api/health`, which reports whether the shared database is
+actually readable — so an aggregator that has not created the schema yet shows
+up as `unhealthy` rather than as an empty page you have to interpret.
+
+Configuration comes from compose's `environment:` block. The repository-root
+`.env` and `.env.secrets` are excluded from the build context on purpose, so
+nothing is baked into the image.
 
 ## Layout
 
