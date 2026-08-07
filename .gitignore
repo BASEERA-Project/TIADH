@@ -233,3 +233,12 @@ __marimo__/
 *.db-wal
 *.sqlite
 *.sqlite3
+
+# Generated threat feeds
+#   The exporter's output directory — HONEYPOT_EXPORT_DIR, defaulting to
+#   common/src/common/exports because EXPORT_DIR resolves against the installed
+#   package. threat_feed.json, the STIX bundle and the CSVs are rewritten on
+#   every alert/export cycle, so they are runtime output like the database
+#   above, not source. Plural on purpose: the exporter's *code* lives in
+#   common/src/common/export/, which stays tracked.
+exports/
