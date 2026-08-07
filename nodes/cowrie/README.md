@@ -38,7 +38,7 @@ cp .env.example .env
 |---|---|---|
 | `NODE_ID` | `node-02` | This node's ID. Change it per sensor (`node-01`, `node-02`, …). Must be listed in the aggregator's `KNOWN_NODES`. |
 | `NODE_KEY` | `dev-test-key` | This node's secret key. Must match this node's entry in the aggregator's `NODE_KEYS_JSON`. |
-| `COLLECTOR_URL` | `http://localhost:8000/api/events` | Full URL of the collector's `/api/events` endpoint. `stub_server.py` is on **5000**, the real collector on **8000**. |
+| `COLLECTOR_URL` | `http://localhost:8000/api/events` | Full URL of the collector's `/api/events` endpoint: the aggregator's address on this network, and its `COLLECTOR_PORT` — **8000** unless it was changed in the aggregator's `.env`. `stub_server.py` is on **5000** instead. |
 | `LOG_PATH` | `../cowrie-logs/cowrie.json` | Cowrie's JSON log. The default is relative to the working directory — set an absolute path. |
 | `COWRIE_UID` / `COWRIE_GID` | `1000` / `1000` | The user the Cowrie **container** runs as. Read by `docker-compose.yml`, not by `adapter.py`. Only set these if this host's account isn't `1000` (`id -u`). |
 

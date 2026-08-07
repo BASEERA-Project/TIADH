@@ -225,12 +225,13 @@ The settings you will actually touch:
 | `HONEYPOT_DB_PATH` | inside the installed `common` package | **Every part on the host must resolve to the same file.** Leave it unset unless you need to move it — and if you set it, make it **absolute**, or each process resolves it against its own working directory. |
 | `HONEYPOT_EXPORT_DIR` | `common/src/common/exports` | Where the published feed files are written |
 | `KNOWN_NODES` | `node-01,node-02,node-03` | Node IDs allowed to submit events |
+| `COLLECTOR_HOST` / `COLLECTOR_PORT` | `0.0.0.0` / `8000` | Where the collector listens. `0.0.0.0` because the sensors are remote — the opposite of the dashboard. Change the port here **and** in every sensor's `COLLECTOR_URL`. |
 | `NODE_KEYS_JSON` | *(secrets file)* | Collector's `node-id` → secret key map |
 | `DASHBOARD_SECRET_KEY` | *(secrets file)* | Set before exposing the dashboard off loopback |
 | `ALERT_WINDOW_MINUTES` | `5` | How far back each rule looks per pass |
 | `FEED_MIN_SEVERITY` | `medium` | Severity floor for the published feed |
 
-`.env.example` lists all 32 with comments; `common/config.py`,
+`.env.example` lists all 34 with comments; `common/config.py`,
 `core/collector/app/config.py` and `dashboard/app/settings.py` are the three
 modules that read them. Detection thresholds live in `common/config.py` and the
 dashboard's rules panel reads them live, so what you see there is what the
@@ -240,7 +241,7 @@ engine is using.
 
 | Flag | Default | |
 |---|---|---|
-| `--host` / `--port` | `0.0.0.0` / `8000` | Collector bind address — the sensors are remote |
+| `--host` / `--port` | `COLLECTOR_HOST` / `COLLECTOR_PORT` | Collector bind address, for one run — the persistent setting is the `.env` pair above |
 | `--interval` | `30` | Seconds between alert/export cycles |
 | `--enrich-interval` | `30` | Seconds between enrichment passes |
 | `--no-enricher` | off | Skip the enricher — it calls ip-api.com and AbuseIPDB, so use this offline |
@@ -258,8 +259,11 @@ upwards. On a machine with the whole repository checked out, an upward search
 would climb out of `nodes/cowrie/` and find this aggregator `.env` instead,
 which configures a different host entirely.
 
-Only two values have to agree with the aggregator: `NODE_ID` must appear in
-`KNOWN_NODES`, and `NODE_KEY` must match that node's entry in `NODE_KEYS_JSON`.
+Three values have to agree with the aggregator: `NODE_ID` must appear in
+`KNOWN_NODES`, `NODE_KEY` must match that node's entry in `NODE_KEYS_JSON`, and
+`COLLECTOR_URL` must name the address the collector is actually bound to —
+`COLLECTOR_HOST`/`COLLECTOR_PORT` written from the other end, with the
+aggregator's routable IP in place of a `0.0.0.0` bind.
 
 ---
 

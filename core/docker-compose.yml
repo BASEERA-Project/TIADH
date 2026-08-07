@@ -4,13 +4,20 @@ services:
     build:
       context: ..               # repo root, so the Dockerfile can COPY common/ and core/
       dockerfile: core/Dockerfile
+    # Published and container port move together, so the sensors' COLLECTOR_URL
+    # still names one number:  COLLECTOR_PORT=9000 docker compose up -d
+    # Compose interpolates this from the shell, not from the repository-root
+    # .env — that file is kept out of the build context on purpose.
     ports:
-      - "8000:8000"
+      - "${COLLECTOR_PORT:-8000}:${COLLECTOR_PORT:-8000}"
     environment:
       # Shared database — this path is inside the named volume mounted below.
       HONEYPOT_DB_PATH: /app/data/honeypot_aggregator.db
       HONEYPOT_EXPORT_DIR: /app/data/exports
       NODE_KEYS_JSON: '{"node-01":"dev-node-01-key","node-02":"dev-node-02-key","node-03":"dev-node-03-key"}'
+      # COLLECTOR_HOST is left at its 0.0.0.0 default: a loopback bind inside
+      # the container's network namespace would make the mapping above useless.
+      COLLECTOR_PORT: "${COLLECTOR_PORT:-8000}"
       MAX_BATCH_SIZE: "20"
       MAINTENANCE_INTERVAL_SECONDS: "60"
     volumes:

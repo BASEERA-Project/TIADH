@@ -68,9 +68,16 @@ cp .env.example .env
 cp .env.secrets.example .env.secrets   # NODE_KEYS_JSON lives here
 ```
 
-`MAX_BATCH_SIZE` and `MAINTENANCE_INTERVAL_SECONDS` are in `.env`, and
-`NODE_KEYS_JSON` is in `.env.secrets`. A real environment variable outranks
-both. Nothing points at the storage layer itself: `common` is installed as a
+`COLLECTOR_HOST`, `COLLECTOR_PORT`, `MAX_BATCH_SIZE` and
+`MAINTENANCE_INTERVAL_SECONDS` are in `.env`, and `NODE_KEYS_JSON` is in
+`.env.secrets`. A real environment variable outranks both.
+
+`COLLECTOR_HOST` / `COLLECTOR_PORT` (default `0.0.0.0:8000`) are the address
+`main.py serve` binds; `serve --host/--port` overrides them for one run. The
+bare uvicorn command below is uvicorn's own CLI and does not read them — pass
+`--host`/`--port` to uvicorn instead.
+
+Nothing points at the storage layer itself: `common` is installed as a
 dependency, so `from common.db.database import Database` just works.
 
 ### 3. Run the collector on its own

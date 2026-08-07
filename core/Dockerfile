@@ -26,5 +26,12 @@ RUN mkdir -p /app/data
 # One container, the whole aggregator: collector + enricher + alert/export
 # cycle. `serve` creates the schema on startup, so there is no init step, and
 # uvicorn handles SIGTERM, so `docker stop` shuts all three down gracefully.
+#
+# No --host/--port on the command: the bind address comes from COLLECTOR_HOST /
+# COLLECTOR_PORT and defaults to 0.0.0.0:8000, so compose's `environment:` block
+# can move the port without rebuilding the image. Leave the host at 0.0.0.0 —
+# inside the container's own network namespace, a loopback bind would make the
+# published port unreachable. EXPOSE is documentation for the default; what a
+# container actually publishes is compose's `ports:`.
 EXPOSE 8000
-CMD ["python", "main.py", "serve", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "main.py", "serve"]

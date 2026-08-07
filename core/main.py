@@ -197,7 +197,8 @@ def cmd_serve(args, db: Database) -> int:
 
     Three components, one database handle:
 
-        collector   FastAPI on --host/--port, plus its own housekeeping timer
+        collector   FastAPI on COLLECTOR_HOST:COLLECTOR_PORT (--host/--port
+                    override), plus its own housekeeping timer
         enricher    geolocation + profile scoring, every --enrich-interval
         cycle       alerts + feed export, every --interval
 
@@ -230,7 +231,15 @@ def cmd_serve(args, db: Database) -> int:
     for extra in (core_dir, core_dir / "collector"):
         if str(extra) not in sys.path:
             sys.path.insert(0, str(extra))
+    from app.config import get_settings
     from app.main import app as collector_app
+
+    # The collector owns its own bind address (COLLECTOR_HOST / COLLECTOR_PORT),
+    # the same way the dashboard owns DASHBOARD_HOST / DASHBOARD_PORT. A flag
+    # given on the command line wins for this run.
+    collector_settings = get_settings()
+    host = args.host or collector_settings.host
+    port = args.port or collector_settings.port
 
     stop = threading.Event()
     threads: list[threading.Thread] = []
@@ -273,13 +282,14 @@ def cmd_serve(args, db: Database) -> int:
         thread.start()
 
     log.info("database %s", db.path)
+    log.info("collector listening on http://%s:%s/api/events", host, port)
     log.info("alert/export cycle every %ss (housekeeping is the collector's)", args.interval)
     log.info("dashboard is a separate command: cd dashboard && uv run main.py")
 
     # log_config=None keeps uvicorn from installing its own handlers, so its
     # logs and ours come out of one root logger in one format.
     server = uvicorn.Server(
-        uvicorn.Config(collector_app, host=args.host, port=args.port, log_config=None)
+        uvicorn.Config(collector_app, host=host, port=port, log_config=None)
     )
     try:
         # Blocks until SIGINT/SIGTERM; uvicorn owns the signal handlers because
@@ -361,10 +371,13 @@ def build_parser() -> argparse.ArgumentParser:
         "serve",
         help="the whole aggregator in one process: collector + enricher + alert/export cycle",
     )
-    # 0.0.0.0 by default because the sensors are on other hosts. This is the
-    # opposite of the dashboard's default, and deliberately so.
-    p_serve.add_argument("--host", default="0.0.0.0", help="collector bind address")
-    p_serve.add_argument("--port", type=int, default=8000, help="collector port")
+    # No defaults here: they come from COLLECTOR_HOST / COLLECTOR_PORT in .env
+    # (0.0.0.0:8000 when unset), so moving the ingest API is an edit to the
+    # config file rather than to this source or to every start command. These
+    # flags override the file for one run. 0.0.0.0 is the opposite of the
+    # dashboard's default, and deliberately so — the sensors are remote.
+    p_serve.add_argument("--host", help="collector bind address (default: COLLECTOR_HOST, else 0.0.0.0)")
+    p_serve.add_argument("--port", type=int, help="collector port (default: COLLECTOR_PORT, else 8000)")
     p_serve.add_argument("--interval", type=int, default=30,
                          help="seconds between alert/export cycles")
     p_serve.add_argument("--enrich-interval", type=int, default=30,
