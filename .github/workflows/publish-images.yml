@@ -1,0 +1,74 @@
+name: Publish images
+
+# One image per commit on main, for core and dashboard.
+#
+# No path filter on purpose. Both Dockerfiles take the *repository root* as
+# their build context — each needs the sibling `common` package as well as its
+# own tree — so there is no subset of paths that reliably means "this commit
+# cannot change the image". Filtering would eventually publish a `latest` that
+# does not match main.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read # checkout
+      packages: write # push to GHCR — no PAT needed, GITHUB_TOKEN carries this
+
+    strategy:
+      # core and dashboard are independent images; a broken Dockerfile in one
+      # should not cancel the other's build or hide whether it still works.
+      fail-fast: false
+      matrix:
+        component: [core, dashboard]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Derive the image name
+        # ghcr.io rejects an uppercase path and this owner has one, so the
+        # repository slug is lowercased rather than hardcoded — nothing here
+        # needs editing if the repo is renamed or moved. `Owner/TIADH` becomes
+        # ghcr.io/owner/tiadh-core and ghcr.io/owner/tiadh-dashboard.
+        run: echo "IMAGE=${REGISTRY}/${GITHUB_REPOSITORY,,}-${{ matrix.component }}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          # `sha-<full commit>` is what makes a build addressable forever, and
+          # is the tag to pin a deployment to. `latest` is the moving pointer,
+          # guarded by is_default_branch so a workflow_dispatch on some other
+          # branch cannot quietly move it.
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - uses: docker/build-push-action@v7
+        with:
+          # The repository root, matching each docker-compose.yml's `context: ..`
+          context: .
+          file: ${{ matrix.component }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Scoped per component, or core and dashboard would keep evicting
+          # each other from a shared cache and neither would ever hit.
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}

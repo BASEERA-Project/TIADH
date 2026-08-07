@@ -209,6 +209,32 @@ DASHBOARD_PORT=9050 docker compose up -d
 container is configured by compose's `environment:` block (which outranks the
 files anyway) or by a secrets manager — not by a file baked into the image.
 
+### Published images
+
+`.github/workflows/publish-images.yml` builds both images on every commit to
+`main` and pushes them to GHCR, so a deployment host needs no checkout and no
+build:
+
+```
+ghcr.io/kaust-is-better-than-u-think/tiadh-core
+ghcr.io/kaust-is-better-than-u-think/tiadh-dashboard
+```
+
+Each is tagged twice: `latest`, which follows `main`, and `sha-<full commit>`,
+which never moves. Pin a deployment to the SHA — `latest` is for a lab host you
+are happy to have track `main`.
+
+```bash
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u <username> --password-stdin
+docker pull ghcr.io/kaust-is-better-than-u-think/tiadh-dashboard:latest
+```
+
+The packages inherit the repository's visibility, so while it is private that
+login is required to pull; a token needs only `read:packages`. The compose files
+still build from source — they are the development path, and nothing about them
+changed. To run a published image instead, add an `image:` line to the service
+and drop `--build`.
+
 ---
 
 ## Configuration
@@ -295,6 +321,7 @@ aggregator's routable IP in place of a `0.0.0.0` bind.
 ```
 .env.example          aggregator-host configuration — copy to .env
 .env.secrets.example  node keys + dashboard signing key — copy to .env.secrets
+.github/workflows/    publish-images.yml — both images to GHCR on every main commit
 common/     the shared library — installed, imported by everything
   config.py            .env loading, all thresholds and paths
   db/                  Database, schema.sql, Baseline v1.3 validation
