@@ -111,19 +111,18 @@ dependencies = [
     { name = "requests" },
 ]
 
-[package.dev-dependencies]
-dev = [
+[package.optional-dependencies]
+stub = [
     { name = "flask" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "flask", marker = "extra == 'stub'", specifier = ">=3.1" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "requests", specifier = ">=2.31" },
 ]
-
-[package.metadata.requires-dev]
-dev = [{ name = "flask", specifier = ">=3.1" }]
+provides-extras = ["stub"]
 
 [[package]]
 name = "flask"

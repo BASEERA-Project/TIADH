@@ -13,10 +13,9 @@ dependencies = [
     "python-dotenv>=1.0",
 ]
 
-[dependency-groups]
+[project.optional-dependencies]
 # stub_server.py stands in for the collector when testing a sensor on its own.
-# uv installs this group by default, so local testing needs no extra flag; a
-# real sensor host uses `uv run --no-dev` and never installs Flask.
-dev = [
-    "flask>=3.1",
-]
+# An extra rather than a dependency group, so that the thing a sensor host
+# actually does — `uv run adapter.py` — needs no flag and never installs Flask.
+# Only the stub opts in, with `uv run --extra stub stub_server.py`.
+stub = ["flask>=3.1"]

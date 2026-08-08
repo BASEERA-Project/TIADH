@@ -101,9 +101,9 @@ This part can be run and tested entirely on a local machine, without any AWS set
 **1. Set up the environment:** nothing to do. Every command below runs through
 `uv run`, which creates `.venv/` and installs the pinned versions from
 `uv.lock` on its own — no separate install step, no virtualenv to activate.
-Shipping events needs only `requests` and `python-dotenv`; Flask is a `dev`
-dependency, because the sole thing that uses it is the stub collector. On a real
-sensor host, where there is nothing to stub, leave it out with `uv run --no-dev`.
+Shipping events needs only `requests` and `python-dotenv`, so that is all a
+sensor host ever installs. Flask is an opt-in `stub` extra, because the sole
+thing that uses it is the stub collector below.
 
 **2. Start Cowrie:**
 ```bash
@@ -115,9 +115,10 @@ docker ps
 nc -vz localhost 2222
 ```
 
-**3. Start the stub collector** (in its own terminal):
+**3. Start the stub collector** (in its own terminal). This is the one command
+that needs Flask, so it asks for the `stub` extra:
 ```bash
-uv run stub_server.py
+uv run --extra stub stub_server.py
 ```
 
 **4. Start the adapter** (in another terminal). The stub listens on 5000 while

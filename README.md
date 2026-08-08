@@ -145,7 +145,7 @@ uv run main.py
 cd nodes/cowrie
 cp .env.example .env                        # set COLLECTOR_URL and NODE_KEY
 docker compose up -d                        # Cowrie on :2222
-uv run --no-dev adapter.py                  # reads the .env beside it; --no-dev skips the stub's Flask
+uv run adapter.py                           # reads the .env beside it
 ```
 
 Confirm the loop closed: `ssh -p 2222 root@<sensor>` from anywhere, then watch
