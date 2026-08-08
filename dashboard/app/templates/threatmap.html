@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui with context %}
+
+{#  Map — the geography of the traffic. Two kinds of fact share this screen and
+    the page keeps them apart: an origin is where the enricher measured an IP to
+    be, a sensor is where an operator declared a node to be. Anything neither
+    half can support is counted underneath rather than drawn.  #}
+
+{% block crumb %}<div class="crumb">Origins, sensors and the paths between them</div>{% endblock %}
+
+{% block content %}
+
+<form class="filters" method="get" data-autosubmit>
+  <label class="field">
+    <span>Window</span>
+    <select name="window">
+      {% for value, label in windows %}
+        <option value="{{ value }}" {% if window == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <div class="spacer"></div>
+  <div class="filter-summary">
+    {% if map.truncated %}the {{ map.origins | length | number }} heaviest origins
+    {%- else %}{{ map.origins | length | number }} origin{{ '' if map.origins | length == 1 else 's' }}{% endif %} ·
+    {{ map.arcs | length | number }} path{{ '' if map.arcs | length == 1 else 's' }} ·
+    {{ map.sensors | length | number }} of
+    {{ (map.sensors | length + map.unplaced_sensors | length) | number }} sensors placed
+  </div>
+  <button class="btn btn-primary" type="submit">Apply</button>
+</form>
+
+<div class="panel">
+  <div class="panel-head">
+    <h2>Attack geography</h2>
+    <span class="sub">
+      {{ map.total_events | number }} events behind the marks · {{ window_label }}
+    </span>
+    <div class="actions">
+      <a class="btn btn-sm" href="{{ url_for('attackers.index', window=window) }}">Attackers table</a>
+    </div>
+  </div>
+  <div class="panel-body">
+    {{ ui.worldmap(map) }}
+  </div>
+</div>
+
+{% if map.unplaced_sensors or total_attackers > placed_ips %}
+  <div style="margin-top: 14px">
+    {% if map.unplaced_sensors %}
+      {{ ui.note('Not on the map: ' ~ (map.unplaced_sensors | map(attribute='node_id') | join(', ')) ~
+                 '. Baseline v1.3 froze the nodes table without coordinates, so a sensor is placed by
+                  DASHBOARD_NODE_COORDS — for example node-01:24.7136,46.6753 — rather than by anything
+                  the pipeline can measure. Until one is set, that sensor is counted but not drawn.', 'warn') }}
+    {% endif %}
+    {% if total_attackers > placed_ips %}
+      <div{% if map.unplaced_sensors %} style="margin-top: 10px"{% endif %}>
+        {{ ui.note(((total_attackers - placed_ips) | number) ~ ' of ' ~ (total_attackers | number) ~
+                   ' attacker IPs have no coordinates in reputation, and an IP the enricher could not
+                    place cannot be drawn. They are in the tables regardless — the map is a view of what
+                    enrichment has reached, never of the whole event stream.') }}
+      </div>
+    {% endif %}
+  </div>
+{% endif %}
+
+<div class="grid-2" style="margin-top: 14px">
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Where it comes from</h2>
+      <span class="sub">by event volume, all time</span>
+    </div>
+    <div class="panel-body">
+      {% if countries %}
+        {% set peak = countries | map(attribute='events') | max %}
+        <div class="barlist">
+          {% for row in countries %}
+            {{ ui.barrow(row.country, row.events, peak, '',
+                         url_for('attackers.index', country=row.country),
+                         row.ips ~ ' distinct IPs') }}
+          {% endfor %}
+        </div>
+      {% else %}
+        {{ ui.empty('No geolocation yet', 'Enrichment has not written any reputation rows.') }}
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Where it lands</h2>
+      <span class="sub">what reached each sensor from the origins drawn above</span>
+      <div class="actions"><a class="btn btn-sm" href="{{ url_for('nodes.index') }}">Node detail</a></div>
+    </div>
+    {% if map.sensors or map.unplaced_sensors %}
+      <div class="table-wrap">
+        <table class="grid">
+          <thead>
+            <tr>
+              <th>Node</th><th>Health</th><th>Position</th>
+              <th class="num">Origins</th><th class="num">Events</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for sensor in map.sensors | sort(attribute='events', reverse=true) %}
+              <tr class="{% if sensor.health == 'critical' %}is-high{% elif sensor.health == 'warning' %}is-medium{% endif %}">
+                <td class="mono strong">{{ sensor.node_id }}</td>
+                <td>{{ ui.health(sensor.health) }}</td>
+                <td class="mono tiny">{{ sensor.latitude }}, {{ sensor.longitude }}</td>
+                <td class="num">{{ sensor.attackers | number }}</td>
+                <td class="num">{{ sensor.events | number }}</td>
+              </tr>
+            {% endfor %}
+            {% for sensor in map.unplaced_sensors %}
+              <tr>
+                <td class="mono strong">{{ sensor.node_id }}</td>
+                <td>{{ ui.health(sensor.health) }}</td>
+                <td class="dim tiny" colspan="3">no coordinates configured</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {{ ui.empty('No sensors registered', 'Nodes appear here as soon as the collector accepts their first event.') }}
+    {% endif %}
+  </div>
+</div>
+
+{% if map.origins %}
+  <div class="panel" style="margin-top: 14px">
+    <div class="panel-head">
+      <h2>Placed origins</h2>
+      <span class="sub">the marks on the map, heaviest first</span>
+      <div class="actions">
+        <a class="btn btn-sm" href="{{ url_for('attackers.index', sort='events', window=window) }}">All attackers</a>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="grid">
+        <thead>
+          <tr>
+            <th>IP</th><th>City</th><th>Country</th><th class="num">Lat</th><th class="num">Lon</th>
+            <th class="num">Events</th><th class="num">Share</th><th class="num">Nodes</th>
+            <th class="num">Score</th><th>Last seen</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for origin in map.origins[:25] %}
+            <tr class="{% if origin.band == 'high' %}is-high{% elif origin.band == 'medium' %}is-medium{% endif %}">
+              <td>{{ ui.ip(origin.attacker_ip) }}</td>
+              <td class="truncate">{{ origin.city or DASH }}</td>
+              <td class="truncate">{{ origin.country or DASH }}</td>
+              <td class="num mono tiny">{{ origin.latitude }}</td>
+              <td class="num mono tiny">{{ origin.longitude }}</td>
+              <td class="num">{{ origin.events | number }}</td>
+              <td class="num dim">{{ origin.share }}%</td>
+              <td class="num">{{ origin.nodes | number }}</td>
+              <td class="num">{{ ui.score(origin.risk_score,
+                    'abuse ' ~ (origin.abuse_score if origin.abuse_score is not none else '—') ~
+                    ' · profile ' ~ (origin.profile_score if origin.profile_score is not none else '—')) }}</td>
+              <td>{{ ui.age(origin.last_seen) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if map.origins | length > 25 or map.truncated %}
+      <div class="panel-foot dim tiny">
+        The 25 heaviest of {{ map.origins | length | number }} marks —
+        <a href="{{ url_for('attackers.index', sort='events', window=window) }}">the attackers table</a>
+        carries the rest{% if map.truncated %}, including the origins past the map's marker cap{% endif %}.
+      </div>
+    {% endif %}
+  </div>
+{% endif %}
+
+{% endblock %}

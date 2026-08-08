@@ -1,8 +1,8 @@
 # Dashboard — Part 5
 
-A Flask read model over the Baseline v1.3 database. Six screens, dark by default,
-built for someone triaging a honeypot fleet rather than for someone admiring a
-chart.
+A Flask read model over the Baseline v1.3 database. Seven screens, dark by
+default, built for someone triaging a honeypot fleet rather than for someone
+admiring a chart.
 
 ```bash
 cd dashboard
@@ -21,6 +21,7 @@ override it anywhere with `HONEYPOT_DB_PATH`.
 | **Overview** | What is happening right now. Every tile is a filter link: `42 unique IPs` opens Attackers showing those 42. |
 | **Attackers** | Reputation joined to event aggregates — score, geolocation, first/last seen, sessions, failed logins, commands, alerts. Searchable, sortable, paginated. Each row opens a profile with the IP's whole history and an export button. |
 | **Sessions** | The list, and the transcript. A session renders as a terminal: connect → 20 failed logins → accepted → command sequence → session end, timestamped down the left, passwords as `***MASKED***`, risky commands flagged by the alert engine's own classifier. |
+| **Map** | Where the traffic comes from and which sensor it lands on. Geolocated attacker IPs as marks sized by volume and coloured by risk band, sensors as crosshairs, an arc per origin-to-node pair. Hovering a mark lights its paths and dims everything else. See [The map](#the-map). |
 | **Alerts** | One row per `alerts` row, with acknowledge/close actions, next to a panel showing all seven detection rules and their live thresholds. |
 | **Nodes** | Sensor health in missed heartbeats — amber past 2, red past 5 — plus events shipped and measured ingest lag. |
 | **Feeds** | A UI over `common/export/exporter.py`. Pick a window and filters, preview the records, download JSON, CSV or STIX from a stable URL. |
@@ -41,6 +42,8 @@ any second setup step. An exported variable outranks the file.
 | `DASHBOARD_REFRESH_SECONDS` | `30` | default auto-refresh; the header control overrides per browser |
 | `DASHBOARD_PAGE_SIZE` | `50` | table page size |
 | `DASHBOARD_ACTIVITY_HOURS` | `24` | hours covered by the Overview chart |
+| `DASHBOARD_NODE_COORDS` | unset | where each sensor sits, e.g. `node-01:24.7136,46.6753; node-02:52.3676,4.9041` |
+| `DASHBOARD_MAP_MAX_ORIGINS` / `_MAX_ARCS` | `150` / `200` | marks and paths drawn before the map starts reporting a remainder |
 | `DASHBOARD_APP_NAME` / `_SUBTITLE` | `TIADH` / … | header text |
 | `DASHBOARD_ALLOW_ALERT_ACTIONS` | `1` | `0` for strictly read-only |
 | `DASHBOARD_HEARTBEAT_WARN_MISSED` / `_CRIT_MISSED` | `2` / `5` | amber and red thresholds |
@@ -56,6 +59,50 @@ those, never `core/`.
 
 It binds to loopback by default. `--host 0.0.0.0` exposes attacker data and the
 outbound feed to the network; set `DASHBOARD_SECRET_KEY` if you do.
+
+## The map
+
+The two ends of an arc are not the same kind of fact, and the screen is built so
+you can tell which is which.
+
+**The origin end is measured.** It is `reputation.latitude` / `.longitude`,
+written by the enricher from the IP itself. An IP the enricher could not place is
+never dropped onto the middle of its country — it is counted under the map as
+unplaced, and the panel says how many. A map that quietly fills its gaps is the
+one screen in a SOC that everybody believes and nobody can check.
+
+**The sensor end is declared.** Baseline v1.3 froze the `nodes` table without
+coordinates and this dashboard does not get to add a column to a frozen
+contract, so a sensor is placed by configuration:
+
+```bash
+DASHBOARD_NODE_COORDS="node-01:24.7136,46.6753; node-02:52.3676,4.9041"
+```
+
+Semicolons or newlines between entries, `lat,lon` after the node id. A node left
+out is named under the map rather than guessed at; a `nodes.location` that
+already holds a `lat,lon` pair is used when nothing is configured for that node.
+With no sensor placed, the origins still draw — there is simply nothing to draw
+an arc to.
+
+Everything else on the panel is derived, not decorative: circle **area** is
+event volume, colour is the risk band the `high_risk_ip` rule uses, a dashed
+ring means that IP actually authenticated, and line weight is the volume on that
+one origin-to-sensor path. Hovering any mark lights the arcs that touch it and
+the marks at their far ends, which is the fastest way to answer "who reached
+that sensor?".
+
+The coastline is **vendored, not fetched**: `app/templates/_world_land.svg` is
+Natural Earth 1:110m land (public domain), projected and simplified by
+`tools/build_world_svg.py`. It is inlined into the page's own `<svg>` so the
+marks share its coordinate space, and because the Content-Security-Policy here
+would refuse a remote tile server anyway — a security tool that phones out to a
+CDN to draw a map is telling on itself. Both the file and the marks are
+projected by `app/geo.py`, so the land and the data cannot drift apart:
+
+```bash
+uv run tools/build_world_svg.py            # after changing the projection
+```
 
 ## Demo data
 
@@ -158,11 +205,15 @@ app/
   db.py             request-scoped read-only handle (+ the one write path)
   queries.py        adapters — windows, pagination, gap filling, health verdict
   formatting.py     Jinja filters — timestamps, ages, severities, scores
+  geo.py            the map's projection, arcs and sensor placement
   rule_catalog.py   prose for the rules panel; values come from common.config
   views/            one blueprint per screen, plus a small JSON API
   templates/        base, macros, one template per screen
+                    _world_land.svg — generated coastline, see tools/
   static/           soc.css and soc.js — no build step, no external requests
-tools/seed_demo.py  demo dataset generator
+tools/
+  seed_demo.py      demo dataset generator
+  build_world_svg.py  rebuilds the coastline from Natural Earth
 ```
 
 ## Design notes

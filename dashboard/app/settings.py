@@ -18,6 +18,8 @@ from pathlib import Path
 
 from common import config as core_config
 
+from app import geo
+
 
 def _int(name: str, default: int) -> int:
     try:
@@ -75,6 +77,23 @@ class Settings:
     )
     HEARTBEAT_WARN_MISSED = _int("DASHBOARD_HEARTBEAT_WARN_MISSED", 2)
     HEARTBEAT_CRIT_MISSED = _int("DASHBOARD_HEARTBEAT_CRIT_MISSED", 5)
+
+    # -- threat map -------------------------------------------------------
+    #: Where each sensor sits, for the destination end of the map:
+    #:
+    #:     DASHBOARD_NODE_COORDS=node-01:24.7136,46.6753; node-02:52.3676,4.9041
+    #:
+    #: This is configuration rather than data because Baseline v1.3 froze the
+    #: `nodes` table without coordinates, and the dashboard does not get to add a
+    #: column to a frozen contract. A node left out of it is named under the map
+    #: as unplaced — never dropped on a plausible-looking spot.
+    NODE_COORDINATES = geo.parse_node_coordinates(os.getenv("DASHBOARD_NODE_COORDS"))
+
+    #: Caps on *marks*, not on data. Past them the map says how many origins it
+    #: is not drawing, so a busy day degrades into a readable map plus a number
+    #: rather than into a solid disc of overlapping circles.
+    MAP_MAX_ORIGINS = _int("DASHBOARD_MAP_MAX_ORIGINS", 150)
+    MAP_MAX_ARCS = _int("DASHBOARD_MAP_MAX_ARCS", 200)
 
     # -- flask ------------------------------------------------------------
     SECRET_KEY = os.getenv("DASHBOARD_SECRET_KEY") or "dev-only-not-for-production"

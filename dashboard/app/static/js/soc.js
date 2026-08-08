@@ -196,6 +196,77 @@
     });
   }
 
+  /* -- threat map ------------------------------------------------------- */
+
+  /*
+   * Hovering a mark on the map answers "who reached which sensor?": the mark,
+   * the arcs touching it and the marks at the far end of those arcs stay lit
+   * while everything else dims. The wiring is done by comparing attribute
+   * values rather than by building a selector out of them — an IP and a node id
+   * are data, and data does not belong inside a query string.
+   *
+   * The map is fully readable without any of this; it only removes the work of
+   * tracing a line by eye.
+   */
+  function initWorldmap() {
+    var MARKS = ".wm-origin, .wm-sensor";
+    var ARCS = ".wm-arc, .wm-tracer";
+
+    function focus(map, mark) {
+      var ip = mark.getAttribute("data-ip");
+      var node = mark.getAttribute("data-node");
+      var ips = Object.create(null);
+      var nodes = Object.create(null);
+
+      // Each arc that touches the hovered mark also lights the mark at its
+      // other end, so one hover shows a whole origin-to-sensor relationship.
+      map.querySelectorAll(ARCS).forEach(function (arc) {
+        var arcIp = arc.getAttribute("data-ip");
+        var arcNode = arc.getAttribute("data-node");
+        if ((ip && arcIp === ip) || (node && arcNode === node)) {
+          if (arcIp) { ips[arcIp] = true; }
+          if (arcNode) { nodes[arcNode] = true; }
+        }
+      });
+
+      map.querySelectorAll(ARCS).forEach(function (arc) {
+        arc.classList.toggle(
+          "is-lit",
+          (ip && arc.getAttribute("data-ip") === ip) ||
+          (node && arc.getAttribute("data-node") === node)
+        );
+      });
+      map.querySelectorAll(MARKS).forEach(function (other) {
+        var otherIp = other.getAttribute("data-ip");
+        var otherNode = other.getAttribute("data-node");
+        other.classList.toggle(
+          "is-lit",
+          other === mark ||
+          (otherIp ? ips[otherIp] === true : nodes[otherNode] === true)
+        );
+      });
+      map.classList.add("is-focused");
+    }
+
+    function clear(map) {
+      map.classList.remove("is-focused");
+      map.querySelectorAll(".is-lit").forEach(function (node) {
+        node.classList.remove("is-lit");
+      });
+    }
+
+    document.querySelectorAll("[data-worldmap]").forEach(function (map) {
+      function enter(event) {
+        var mark = event.target.closest ? event.target.closest(MARKS) : null;
+        if (mark) { focus(map, mark); } else if (event.type === "mouseover") { clear(map); }
+      }
+      map.addEventListener("mouseover", enter);
+      map.addEventListener("focusin", enter);
+      map.addEventListener("mouseleave", function () { clear(map); });
+      map.addEventListener("focusout", function () { clear(map); });
+    });
+  }
+
   /* -- live counters ---------------------------------------------------- */
 
   function initLive() {
@@ -232,6 +303,7 @@
     initTooltips();
     initCopy();
     initFilters();
+    initWorldmap();
     initLive();
   });
 

@@ -33,6 +33,8 @@ NAV = [
      "hint": "Reputation and behaviour per IP"},
     {"endpoint": "sessions.index", "label": "Sessions", "icon": "terminal",
      "hint": "Session transcripts"},
+    {"endpoint": "threatmap.index", "label": "Map", "icon": "globe",
+     "hint": "Where traffic comes from and which sensor it lands on"},
     {"endpoint": "alerts.index", "label": "Alerts", "icon": "alert",
      "hint": "Rule hits and the rules that produced them"},
     {"endpoint": "nodes.index", "label": "Nodes", "icon": "server",
@@ -69,11 +71,14 @@ def create_app(config_object=Settings) -> Flask:
 # --------------------------------------------------------------------------
 
 def _register_blueprints(app: Flask) -> None:
-    from app.views import alerts, api, attackers, feeds, nodes, overview, sessions
+    from app.views import (
+        alerts, api, attackers, feeds, nodes, overview, sessions, threatmap,
+    )
 
     app.register_blueprint(overview.bp)
     app.register_blueprint(attackers.bp)
     app.register_blueprint(sessions.bp)
+    app.register_blueprint(threatmap.bp)
     app.register_blueprint(alerts.bp)
     app.register_blueprint(nodes.bp)
     app.register_blueprint(feeds.bp)
