@@ -116,6 +116,16 @@ uv run main.py --db demo/honeypot_demo.db
 Then open <http://127.0.0.1:8050>. The alerts on screen were produced by the
 real rules engine running over the generated events, not written directly.
 
+The Map screen draws attacker origins straight from the enriched coordinates,
+but the sensor end is configuration — the frozen `nodes` table has no latitude
+or longitude — so give the generated nodes somewhere to be if you want the
+strike arcs:
+
+```bash
+DASHBOARD_NODE_COORDS="node-01:24.7136,46.6753; node-02:52.3676,4.9041; node-03:1.3521,103.8198" \
+  uv run main.py --db demo/honeypot_demo.db
+```
+
 ### The full pipeline
 
 **1. Start the aggregator** — collector, enricher and alert/export cycle, one

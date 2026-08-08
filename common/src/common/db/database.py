@@ -953,6 +953,8 @@ class Database:
                      WHERE status = 'open' AND severity = 'high')           AS open_high_alerts,
                    (SELECT COUNT(*) FROM alerts WHERE timestamp >= :window) AS alerts_in_window,
                    (SELECT COUNT(*) FROM reputation)                        AS enriched_ips,
+                   (SELECT COUNT(*) FROM reputation
+                     WHERE latitude IS NOT NULL AND longitude IS NOT NULL)  AS placed_ips,
                    (SELECT MAX(timestamp) FROM events)                      AS latest_event
             """,
             params,
@@ -1078,6 +1080,79 @@ class Database:
             {"since": since} if since else {},
         )
         return {row["alert_type"]: row for row in rows}
+
+    # -- geography --------------------------------------------------------
+
+    def get_attack_origins(
+        self, since: str = None, limit: int = 200
+    ) -> List[Dict[str, Any]]:
+        """
+        Geolocated attacker IPs with their volume — the origin side of the map.
+
+        Only rows the enricher managed to place are returned: an IP with a
+        country but no coordinates cannot be drawn, and guessing a point for it
+        would put a mark somewhere the data does not support. The size of that
+        gap is reportable without a second query here — `get_dashboard_overview`
+        returns `placed_ips` beside `unique_attackers` for exactly that.
+        """
+        clause = "AND e.timestamp >= :since" if since else ""
+        params: Dict[str, Any] = {"limit": limit}
+        if since:
+            params["since"] = since
+        return self.query(
+            f"""
+            SELECT r.attacker_ip,
+                   r.country, r.city,
+                   r.latitude, r.longitude,
+                   r.abuse_score, r.profile_score,
+                   MAX(COALESCE(r.abuse_score, 0), COALESCE(r.profile_score, 0))
+                                               AS risk_score,
+                   COUNT(*)                    AS events,
+                   COUNT(DISTINCT e.session_id) AS sessions,
+                   COUNT(DISTINCT e.node_id)   AS nodes,
+                   SUM(CASE WHEN e.event_type = 'login_success' THEN 1 ELSE 0 END)
+                                               AS login_successes,
+                   MAX(e.timestamp)            AS last_seen
+              FROM reputation r
+              JOIN events e ON e.attacker_ip = r.attacker_ip
+             WHERE r.latitude IS NOT NULL AND r.longitude IS NOT NULL
+               {clause}
+             GROUP BY r.attacker_ip
+             ORDER BY events DESC
+             LIMIT :limit
+            """,
+            params,
+        )
+
+    def get_attack_paths(
+        self, since: str = None, limit: int = 400
+    ) -> List[Dict[str, Any]]:
+        """
+        Origin-to-sensor pairs: which placed IP hit which node, and how hard.
+
+        One row per (attacker_ip, node_id). Heartbeats carry no attacker_ip, so
+        the join to `reputation` drops them without a clause of its own.
+        """
+        clause = "AND e.timestamp >= :since" if since else ""
+        params: Dict[str, Any] = {"limit": limit}
+        if since:
+            params["since"] = since
+        return self.query(
+            f"""
+            SELECT e.attacker_ip,
+                   e.node_id,
+                   COUNT(*)         AS events,
+                   MAX(e.timestamp) AS last_seen
+              FROM events e
+              JOIN reputation r ON r.attacker_ip = e.attacker_ip
+             WHERE r.latitude IS NOT NULL AND r.longitude IS NOT NULL
+               {clause}
+             GROUP BY e.attacker_ip, e.node_id
+             ORDER BY events DESC
+             LIMIT :limit
+            """,
+            params,
+        )
 
     # -- attackers --------------------------------------------------------
 

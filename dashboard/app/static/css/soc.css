@@ -49,6 +49,13 @@
   --warn-soft: rgba(250, 178, 25, 0.14);
   --crit-soft: rgba(208, 59, 59, 0.16);
 
+  /* Threat map. The land is scenery, so it is painted in neutrals and never
+     borrows a status colour — every hue on that panel is a measurement. */
+  --map-ocean: #0b0c0d;
+  --map-land: #24262a;
+  --map-coast: rgba(255, 255, 255, 0.20);
+  --map-grid: rgba(255, 255, 255, 0.055);
+
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas,
           "SF Mono", Menlo, "DejaVu Sans Mono", monospace;
@@ -85,6 +92,12 @@
   --warn-soft: rgba(250, 178, 25, 0.16);
   --good-soft: rgba(12, 163, 12, 0.10);
   --shadow: 0 1px 2px rgba(11, 11, 11, 0.06);
+
+  /* Printed-atlas inversion: pale land on a slightly deeper sea. */
+  --map-ocean: #e9ecef;
+  --map-land: #fbfbfa;
+  --map-coast: rgba(11, 11, 11, 0.28);
+  --map-grid: rgba(11, 11, 11, 0.06);
 }
 
 /* -- reset --------------------------------------------------------------- */
@@ -664,6 +677,145 @@ table.grid td.zero { color: var(--ink-3); }
 .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: var(--ink-3); }
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
 .legend i { width: 8px; height: 8px; border-radius: 2px; display: block; }
+
+/* -- threat map ---------------------------------------------------------- */
+
+/* The land is scenery and is painted like scenery: neutral, low contrast, no
+   hue of its own. Every colour on this panel is therefore a measurement — blue
+   for data, amber for medium risk, red for high, and nothing else competing
+   for the eye. Geometry (positions, radii, curves) arrives from app/geo.py as
+   attributes; this file only decides what the marks look like. */
+
+.worldmap {
+  position: relative;
+  background: var(--map-ocean);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.worldmap svg { display: block; width: 100%; height: auto; }
+
+.wm-grid line { stroke: var(--map-grid); stroke-width: 0.5; }
+.wm-grid .wm-equator { stroke: var(--map-grid); stroke-width: 1; }
+.wm-land { fill: var(--map-land); stroke: var(--map-coast); stroke-width: 0.5; }
+
+/* Arcs: origin to sensor. Faint by default — a hundred of them at full
+   strength is a ball of wool, not a map. */
+.wm-arc { fill: none; stroke: var(--accent); stroke-linecap: round; }
+.wm-tracer {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent) 45%, #fff);
+  stroke-linecap: round;
+  stroke-dasharray: 2.5 100;
+  animation: wm-trace 2.8s linear infinite;
+}
+@keyframes wm-trace {
+  from { stroke-dashoffset: 102.5; }
+  to   { stroke-dashoffset: 0; }
+}
+
+/* Origins. Hollow, so overlapping cities stay countable. */
+.wm-origin { cursor: pointer; }
+.wm-origin circle {
+  fill: color-mix(in srgb, var(--accent) 22%, transparent);
+  stroke: var(--accent);
+  stroke-width: 1;
+}
+.wm-origin .wm-core { fill: var(--accent); stroke: none; }
+.wm-origin.band-medium circle { fill: color-mix(in srgb, var(--warn) 22%, transparent);
+  stroke: var(--warn); }
+.wm-origin.band-medium .wm-core { fill: var(--warn); }
+.wm-origin.band-high circle { fill: color-mix(in srgb, var(--crit) 26%, transparent);
+  stroke: var(--crit); }
+.wm-origin.band-high .wm-core { fill: var(--crit); }
+.wm-origin.band-none circle { fill: color-mix(in srgb, var(--ink-3) 18%, transparent);
+  stroke: var(--ink-3); }
+.wm-origin.band-none .wm-core { fill: var(--ink-3); }
+/* An IP that actually authenticated gets a second ring: the one distinction on
+   this map that is not a score but an outcome. */
+.wm-origin.is-breached circle { stroke-width: 1.8; stroke-dasharray: 2.5 2; }
+.wm-origin:hover circle:first-child, .wm-origin:focus circle:first-child {
+  stroke-width: 2.4;
+}
+
+/* Sensors: a crosshair, never a dot — it must not read as another attacker. */
+.wm-sensor { cursor: pointer; }
+.wm-sensor .wm-cross { stroke: var(--ink); stroke-width: 1.6; stroke-linecap: round; }
+.wm-sensor .wm-hit { fill: var(--good); stroke: var(--map-ocean); stroke-width: 1.2; }
+.wm-sensor .wm-pulse {
+  fill: none;
+  stroke: var(--good);
+  stroke-width: 1.4;
+  animation: wm-pulse 2.6s ease-out infinite;
+}
+/* Health recolours the dot and the ring around it. The ring keeps `fill: none`
+   from the rule above — filling it would turn the pulse into a spreading blob
+   over the coastline. */
+.wm-sensor.health-warning .wm-hit { fill: var(--warn); }
+.wm-sensor.health-warning .wm-pulse { stroke: var(--warn); }
+.wm-sensor.health-critical .wm-hit { fill: var(--crit); }
+.wm-sensor.health-critical .wm-pulse { stroke: var(--crit); }
+.wm-sensor.health-unknown .wm-hit { fill: var(--ink-3); }
+/* A sensor nobody has heard from does not get a heartbeat animation. */
+.wm-sensor.health-unknown .wm-pulse { animation: none; opacity: 0; }
+@keyframes wm-pulse {
+  0%        { transform: scale(0.5); opacity: 0.55; }
+  70%, 100% { transform: scale(2.3); opacity: 0; }
+}
+
+/* Hovering one mark answers "who reached which sensor?" by dimming everything
+   that is not part of the answer. */
+.worldmap.is-focused .wm-origin { opacity: 0.22; }
+.worldmap.is-focused .wm-arc { opacity: 0.05; }
+.worldmap.is-focused .wm-tracer { opacity: 0.08; }
+.worldmap.is-focused .wm-sensor { opacity: 0.35; }
+.worldmap.is-focused .is-lit { opacity: 1; }
+.worldmap.is-focused .wm-arc.is-lit { opacity: 0.9; stroke-width: 1.6; }
+
+.wm-overlay {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 14px 16px;
+  background: linear-gradient(to top, var(--map-ocean) 55%, transparent);
+  color: var(--ink-3);
+  font-size: 12px;
+  text-align: center;
+}
+.wm-overlay strong { display: block; color: var(--ink-2); font-size: 13px; margin-bottom: 2px; }
+
+.wm-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.wm-key { display: inline-flex; align-items: center; gap: 6px; }
+.wm-key .dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border: 1px solid var(--accent);
+}
+.wm-key .dot.band-medium { background: color-mix(in srgb, var(--warn) 22%, transparent);
+  border-color: var(--warn); }
+.wm-key .dot.band-high { background: color-mix(in srgb, var(--crit) 26%, transparent);
+  border-color: var(--crit); }
+.wm-key .dot.band-none { background: color-mix(in srgb, var(--ink-3) 18%, transparent);
+  border-color: var(--ink-3); }
+.wm-key .dot.is-breached { border-style: dashed; border-width: 2px; }
+.wm-key .cross {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--good);
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px color-mix(in srgb, var(--good) 55%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wm-tracer, .wm-sensor .wm-pulse { animation: none; }
+  .wm-tracer { display: none; }
+  .wm-sensor .wm-pulse { opacity: 0.35; }
+}
 
 /* -- key/value ----------------------------------------------------------- */
 

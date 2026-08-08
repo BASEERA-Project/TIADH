@@ -62,6 +62,26 @@
              'node clock to collector, mean of last 500') }}
 </div>
 
+<div class="panel" style="margin-bottom: 14px">
+  <div class="panel-head">
+    <h2>Attack geography</h2>
+    <span class="sub">
+      {% if threat_map.origins %}
+        {{ threat_map.origins | length | number }} placed origin{{ '' if threat_map.origins | length == 1 else 's' }}
+        · {{ threat_map.sensors | length | number }} sensor{{ '' if threat_map.sensors | length == 1 else 's' }} on the map
+      {% else %}
+        awaiting geolocated attacker IPs
+      {% endif %}
+    </span>
+    <div class="actions">
+      <a class="btn btn-sm" href="{{ url_for('threatmap.index') }}">Full map</a>
+    </div>
+  </div>
+  <div class="panel-body">
+    {{ ui.worldmap(threat_map, compact=true) }}
+  </div>
+</div>
+
 <div class="panel">
   <div class="panel-head">
     <h2>Event volume</h2>

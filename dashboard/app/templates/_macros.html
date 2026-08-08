@@ -145,6 +145,108 @@
   {% if href %}</a>{% else %}</div>{% endif %}
 {% endmacro %}
 
+{# =========================================================================
+   The threat map. One argument: the model app/geo.py built, which carries its
+   own viewBox, so nothing here computes a position, a radius or a curve.
+
+   Layers, back to front: graticule, coastline, arcs, tracers, origins,
+   sensors. The first two are decoration and are hidden from assistive
+   technology; every mark above them is a link to the screen that explains it.
+
+   A wrapped arc — one whose short path crosses the antimeridian — is drawn
+   twice, the second copy shifted a full world width, so it leaves one edge and
+   arrives at the other instead of sweeping backwards across the whole map.
+   ========================================================================= #}
+{% macro worldmap(map, compact=false) %}
+<div class="worldmap" data-worldmap>
+  <svg viewBox="0 0 {{ map.width | int }} {{ map.height | int }}"
+       preserveAspectRatio="xMidYMid meet">
+    <title>Attack origins and the sensors they reached</title>
+
+    <g class="wm-grid" aria-hidden="true">
+      {% for x in map.grid.meridians %}
+        <line x1="{{ x }}" y1="0" x2="{{ x }}" y2="{{ map.height | int }}"/>
+      {% endfor %}
+      {% for y in map.grid.parallels %}
+        <line x1="0" y1="{{ y }}" x2="{{ map.width | int }}" y2="{{ y }}"/>
+      {% endfor %}
+      <line class="wm-equator" x1="0" y1="{{ map.grid.equator }}"
+            x2="{{ map.width | int }}" y2="{{ map.grid.equator }}"/>
+    </g>
+
+    <g aria-hidden="true">{% include "_world_land.svg" %}</g>
+
+    <g class="wm-arcs" aria-hidden="true">
+      {% for arc in map.arcs %}
+        {% for shift in ([0, arc.mirror] if arc.mirror else [0]) %}
+          <path class="wm-arc" d="{{ arc.d }}"
+                stroke-width="{{ arc.width }}" opacity="{{ arc.opacity }}"
+                {% if shift %}transform="translate({{ shift }} 0)"{% endif %}
+                data-ip="{{ arc.attacker_ip }}" data-node="{{ arc.node_id }}"/>
+          {% if arc.tracer %}
+            <path class="wm-tracer" d="{{ arc.d }}" pathLength="100"
+                  stroke-width="{{ arc.width + 0.5 }}"
+                  style="animation-delay: {{ arc.delay }}s"
+                  {% if shift %}transform="translate({{ shift }} 0)"{% endif %}
+                  data-ip="{{ arc.attacker_ip }}" data-node="{{ arc.node_id }}"/>
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+    </g>
+
+    <g class="wm-origins">
+      {% for origin in map.origins %}
+        <a href="{{ url_for('attackers.profile', ip=origin.attacker_ip) }}"
+           class="wm-origin band-{{ origin.band }}{% if origin.breached %} is-breached{% endif %}"
+           data-ip="{{ origin.attacker_ip }}"
+           aria-label="{{ origin.attacker_ip }}, {{ (origin.city ~ ', ' if origin.city else '') ~ (origin.country or 'location unknown') }}, {{ origin.events | number }} events, risk {{ origin.risk_score }}"
+           data-tip="{{ origin.attacker_ip }}&#10;{{ (origin.city ~ ', ' if origin.city else '') ~ (origin.country or 'location unknown') }}&#10;{{ origin.events | number }} events · {{ origin.sessions | number }} sessions · {{ origin.nodes }} node(s)&#10;risk {{ origin.risk_score }}{% if origin.breached %} · logged in{% endif %}">
+          <circle cx="{{ origin.x }}" cy="{{ origin.y }}" r="{{ origin.radius }}"/>
+          <circle class="wm-core" cx="{{ origin.x }}" cy="{{ origin.y }}" r="1.4"/>
+        </a>
+      {% endfor %}
+    </g>
+
+    <g class="wm-sensors">
+      {% for sensor in map.sensors %}
+        <a href="{{ url_for('nodes.index') }}" class="wm-sensor health-{{ sensor.health }}"
+           data-node="{{ sensor.node_id }}"
+           aria-label="Sensor {{ sensor.node_id }}, {{ sensor.health }}, {{ sensor.events | number }} events from {{ sensor.attackers | number }} origins on this map"
+           data-tip="{{ sensor.node_id }}{{ ' · ' ~ sensor.location if sensor.location }}&#10;sensor · {{ sensor.health }}&#10;{{ sensor.events | number }} events from {{ sensor.attackers | number }} origin(s) on this map">
+          <g transform="translate({{ sensor.x }} {{ sensor.y }})">
+            <circle class="wm-pulse" r="7"/>
+            <path class="wm-cross" d="M-11 0h6.5M4.5 0h6.5M0 -11v6.5M0 4.5v6.5"/>
+            <circle class="wm-hit" r="3.2"/>
+          </g>
+        </a>
+      {% endfor %}
+    </g>
+  </svg>
+
+  {% if map.is_empty %}
+    <div class="wm-overlay">
+      <strong>Nothing placed yet</strong>
+      Marks appear once the enricher writes coordinates for an attacker IP.
+    </div>
+  {% endif %}
+</div>
+
+{% if not compact %}
+  <div class="wm-legend">
+    <span class="wm-key"><i class="dot band-none"></i>unscored</span>
+    <span class="wm-key"><i class="dot band-low"></i>low</span>
+    <span class="wm-key"><i class="dot band-medium"></i>medium</span>
+    <span class="wm-key"><i class="dot band-high"></i>high risk</span>
+    <span class="wm-key"><i class="dot is-breached"></i>logged in</span>
+    <span class="wm-key"><i class="cross"></i>sensor</span>
+    <span class="wm-key dim">
+      circle area = events{% if map.peak_events %}, largest {{ map.peak_events | number }}{% endif %}
+      {%- if map.arcs %} · line weight = events on that path{% endif %}
+    </span>
+  </div>
+{% endif %}
+{% endmacro %}
+
 {# The activity chart: one column per hour, 2px of surface between neighbours,
    a rounded cap on the data end and a square foot on the baseline. #}
 {% macro colchart(series, peak, key='total') %}
