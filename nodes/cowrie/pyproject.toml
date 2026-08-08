@@ -16,7 +16,7 @@ dependencies = [
 [dependency-groups]
 # stub_server.py stands in for the collector when testing a sensor on its own.
 # uv installs this group by default, so local testing needs no extra flag; a
-# real sensor host uses `uv sync --no-dev` and never installs Flask.
+# real sensor host uses `uv run --no-dev` and never installs Flask.
 dev = [
     "flask>=3.1",
 ]

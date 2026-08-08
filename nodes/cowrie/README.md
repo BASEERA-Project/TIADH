@@ -98,19 +98,12 @@ are `NODE_ID` and `NODE_KEY`.
 
 This part can be run and tested entirely on a local machine, without any AWS setup, using the included stub server.
 
-**1. Set up the environment:**
-```bash
-uv sync
-```
-That creates `.venv/` and installs the pinned versions from `uv.lock` — no
-virtualenv to activate, because every command below runs through `uv run`.
+**1. Set up the environment:** nothing to do. Every command below runs through
+`uv run`, which creates `.venv/` and installs the pinned versions from
+`uv.lock` on its own — no separate install step, no virtualenv to activate.
 Shipping events needs only `requests` and `python-dotenv`; Flask is a `dev`
 dependency, because the sole thing that uses it is the stub collector. On a real
-sensor host, where there is nothing to stub, install without it:
-
-```bash
-uv sync --no-dev
-```
+sensor host, where there is nothing to stub, leave it out with `uv run --no-dev`.
 
 **2. Start Cowrie:**
 ```bash

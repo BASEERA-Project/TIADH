@@ -109,7 +109,6 @@ No sensors, no collector — the fastest way to see every screen populated:
 
 ```bash
 cd dashboard
-uv sync
 uv run tools/seed_demo.py            # a day of realistic traffic
 uv run main.py --db demo/honeypot_demo.db
 ```
@@ -126,7 +125,6 @@ process, one terminal:
 cp .env.example .env                        # from the repository root
 cp .env.secrets.example .env.secrets        # then set real node keys
 cd core
-uv sync
 uv run main.py serve
 ```
 
@@ -138,7 +136,6 @@ therefore the same database — no second configuration step:
 
 ```bash
 cd dashboard
-uv sync
 uv run main.py
 ```
 
@@ -148,8 +145,7 @@ uv run main.py
 cd nodes/cowrie
 cp .env.example .env                        # set COLLECTOR_URL and NODE_KEY
 docker compose up -d                        # Cowrie on :2222
-uv sync --no-dev                            # --no-dev: skip the stub collector's Flask
-uv run adapter.py                           # reads the .env beside it
+uv run --no-dev adapter.py                  # reads the .env beside it; --no-dev skips the stub's Flask
 ```
 
 Confirm the loop closed: `ssh -p 2222 root@<sensor>` from anywhere, then watch

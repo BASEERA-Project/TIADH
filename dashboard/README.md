@@ -6,7 +6,6 @@ chart.
 
 ```bash
 cd dashboard
-uv sync
 uv run tools/seed_demo.py          # optional: generate a day of demo traffic
 uv run main.py --db demo/honeypot_demo.db
 ```
@@ -101,8 +100,7 @@ seeder before a demo.
 Flask's server is fine for a demo. For anything left running:
 
 ```bash
-uv sync --extra serve
-uv run waitress-serve --call --host 127.0.0.1 --port 8050 app:create_app
+uv run --extra serve waitress-serve --call --host 127.0.0.1 --port 8050 app:create_app
 ```
 
 Threaded workers are safe — each request gets its own read-only handle and
