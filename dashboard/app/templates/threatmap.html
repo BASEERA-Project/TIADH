@@ -35,6 +35,7 @@
     <h2>Attack geography</h2>
     <span class="sub">
       {{ map.total_events | number }} events behind the marks · {{ window_label }}
+      {%- if outside_window %} · {{ outside_window | number }} drawable outside this window{% endif %}
     </span>
     <div class="actions">
       <a class="btn btn-sm" href="{{ url_for('attackers.index', window=window) }}">Attackers table</a>
@@ -45,20 +46,57 @@
   </div>
 </div>
 
-{% if map.unplaced_sensors or total_attackers > placed_ips %}
-  <div style="margin-top: 14px">
-    {% if map.unplaced_sensors %}
-      {{ ui.note('Not on the map: ' ~ (map.unplaced_sensors | map(attribute='node_id') | join(', ')) ~
-                 '. Baseline v1.3 froze the nodes table without coordinates, so a sensor is placed by
-                  DASHBOARD_NODE_COORDS — for example node-01:24.7136,46.6753 — rather than by anything
-                  the pipeline can measure. Until one is set, that sensor is counted but not drawn.', 'warn') }}
+{#  Everything this window is not showing, and why. Each of these is a way for a
+    row that is sitting in `events` to be legitimately absent from the map, and
+    each one is stated rather than left as a blank panel — a map that draws
+    nothing and says nothing is indistinguishable from a map that is broken.  #}
+{% if outside_window or map.unknown_nodes or map.unplaced_sensors or total_attackers > placed_ips %}
+  <div class="notes" style="margin-top: 14px">
+
+    {% if outside_window %}
+      {% call ui.note(
+          (outside_window | number) ~ ' drawable event' ~ ('' if outside_window == 1 else 's') ~
+          ' fall outside ' ~ window_label ~ ' and are not on the map above' ~
+          (' — which is why it is empty' if not map.origins else '') ~
+          '. The database holds ' ~ (extent.events | number) ~ ' in all, from ' ~
+          (extent.origins | number) ~ ' placed origin' ~ ('' if extent.origins == 1 else 's') ~
+          ', most recent',
+          'warn' if not map.origins else '') %}
+        {{ ui.age(extent.last_seen) }}. An event keeps the timestamp it was recorded with rather than
+        the one it was stored at, so logs written into the database after the fact sit at their own
+        date — <a href="{{ url_with(window='all') }}">show all time</a>.
+      {% endcall %}
     {% endif %}
+
+    {% if map.unknown_nodes %}
+      <div>
+        {{ ui.note('No path drawn to ' ~ (map.unknown_nodes[:6] | map(attribute='node_id') | join(', ')) ~
+                   (' and ' ~ ((map.unknown_nodes | length) - 6) ~ ' more'
+                    if map.unknown_nodes | length > 6 else '') ~
+                   ': ' ~ ((map.unknown_nodes | sum(attribute='events')) | number) ~ ' events name
+                   a node the fleet does not contain. A sensor registers itself with the collector,
+                   and an event written straight into the database does not — so there is no node to
+                   put on the map and no coordinates to aim an arc at. The origin end of that traffic
+                   still draws; only the destination is missing.', 'warn') }}
+      </div>
+    {% endif %}
+
+    {% if map.unplaced_sensors %}
+      <div>
+        {{ ui.note('Not on the map: ' ~ (map.unplaced_sensors | map(attribute='node_id') | join(', ')) ~
+                   '. Baseline v1.3 froze the nodes table without coordinates, so a sensor is placed by
+                    DASHBOARD_NODE_COORDS — for example node-01:24.7136,46.6753 — rather than by anything
+                    the pipeline can measure. Until one is set, that sensor is counted but not drawn.', 'warn') }}
+      </div>
+    {% endif %}
+
     {% if total_attackers > placed_ips %}
-      <div{% if map.unplaced_sensors %} style="margin-top: 10px"{% endif %}>
+      <div>
         {{ ui.note(((total_attackers - placed_ips) | number) ~ ' of ' ~ (total_attackers | number) ~
                    ' attacker IPs have no coordinates in reputation, and an IP the enricher could not
-                    place cannot be drawn. They are in the tables regardless — the map is a view of what
-                    enrichment has reached, never of the whole event stream.') }}
+                    place cannot be drawn — including any the enricher has not reached yet. They are in
+                    the tables regardless — the map is a view of what enrichment has reached, never of
+                    the whole event stream.') }}
       </div>
     {% endif %}
   </div>

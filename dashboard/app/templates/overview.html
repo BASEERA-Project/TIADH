@@ -69,6 +69,12 @@
       {% if threat_map.origins %}
         {{ threat_map.origins | length | number }} placed origin{{ '' if threat_map.origins | length == 1 else 's' }}
         · {{ threat_map.sensors | length | number }} sensor{{ '' if threat_map.sensors | length == 1 else 's' }} on the map
+      {% elif map_extent.events %}
+        {#  Empty because of this screen's window, not because there is nothing
+            to draw. Saying "awaiting geolocated IPs" here would be false, and
+            would send someone to check enrichment that is working fine.  #}
+        nothing in the last {{ activity_hours }} hours ·
+        <a href="{{ url_for('threatmap.index', window='all') }}">{{ map_extent.events | number }} drawable events over all time</a>
       {% else %}
         awaiting geolocated attacker IPs
       {% endif %}

@@ -130,10 +130,13 @@
   </div>
 {% endmacro %}
 
+{#  `{% call ui.note(...) %}` appends markup — a link, an age — after the text,
+    so a note that ends in "widen the window" can carry the window with it
+    rather than describing where to click.  #}
 {% macro note(text, kind='') %}
   <div class="note {{ kind }}">
     <svg width="14" height="14"><use href="#i-info"/></svg>
-    <div>{{ text }}</div>
+    <div>{{ text }}{% if caller %} {{ caller() }}{% endif %}</div>
   </div>
 {% endmacro %}
 
@@ -231,9 +234,12 @@
   </svg>
 
   {% if map.is_empty %}
+    {#  Both reasons, because the panel cannot tell them apart and guessing one
+        sends the reader to the wrong place: an empty window looks exactly like
+        an empty `reputation` table from in here.  #}
     <div class="wm-overlay">
-      <strong>Nothing placed yet</strong>
-      Marks appear once the enricher writes coordinates for an attacker IP.
+      <strong>Nothing placed in this window</strong>
+      A mark needs an attacker IP the enricher has geolocated, with events inside the window shown.
     </div>
   {% endif %}
 </div>

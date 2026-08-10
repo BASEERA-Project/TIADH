@@ -85,6 +85,19 @@ already holds a `lat,lon` pair is used when nothing is configured for that node.
 With no sensor placed, the origins still draw — there is simply nothing to draw
 an arc to.
 
+**What the map leaves out, it says.** Three things keep a row that is sitting in
+`events` off the panel, and each one is stated under the map rather than left as
+a blank rectangle:
+
+| The map is missing | Because | To fix it |
+| --- | --- | --- |
+| everything, or a chunk | the window. An event carries the timestamp it was *recorded* with, not the one it was written to the database at, so a batch of older logs lands at its own date rather than at import time | widen the window — the note carries an **all time** link, and reports how many drawable events fall outside what you are looking at |
+| one attacker's marks | no `reputation` row with coordinates. Only the enricher writes those, so an IP that reached the database by any other route has none | run the enricher (`python enricher/enrich.py` from `core/`, or `python main.py serve`). It offers up every IP with no reputation row regardless of how old its events are, so it backfills |
+| the arcs, not the marks | a `node_id` no row in `nodes` matches. A sensor registers itself with the collector; a direct write does not, so there is no sensor to aim an arc at | register the node, or correct the `node_id` on those rows |
+
+The first two are the shape a bulk import takes, and between them they are why a
+freshly loaded history can arrive on an empty map.
+
 Everything else on the panel is derived, not decorative: circle **area** is
 event volume, colour is the risk band the `high_risk_ip` rule uses, a dashed
 ring means that IP actually authenticated, and line weight is the volume on that
