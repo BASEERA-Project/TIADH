@@ -63,11 +63,29 @@ MAX_RADIUS = 13.0
 ARC_BOW = 0.24
 ARC_BOW_MAX = 78.0
 
-#: How many of the busiest arcs carry a moving tracer, and how long one takes to
-#: fly. Kept here rather than in the stylesheet because the per-arc start offset
-#: is computed against it.
+#: A path is a strike, not a fixture: it fades in, holds, fades out, and is gone
+#: for the rest of its cycle. Drawing all of them permanently is a ball of wool
+#: that says only "these pairs exist"; showing each in turn says which pairs are
+#: live and lets the eye follow one line at a time. The visible share of the
+#: cycle is what keeps the map legible — at 200 arcs roughly thirty are lit at
+#: any instant instead of all of them.
+#:
+#: The cycle length lives here rather than in the stylesheet because the per-arc
+#: start offset is computed against it; the fade shape stays in the stylesheet,
+#: as a fraction of the cycle — `.wm-arc`'s keyframes span 0% to 30% of this,
+#: about 2.7s on screen. Change one and change the other.
+ARC_CYCLE_SECONDS = 9.0
+
+#: How many of the busiest arcs carry a moving tracer, riding the same cycle as
+#: the line under it. All of them at once is a screensaver; the top few are a
+#: read of where the pressure is.
 TRACER_ARCS = 40
-TRACER_SECONDS = 2.8
+
+#: Successive multiples of the golden ratio never clump, so consecutive arcs
+#: start at well-separated points of the cycle whatever the arc count — the map
+#: never blinks in lockstep, and the spread does not depend on how many paths
+#: happen to be drawn.
+_GOLDEN_FRACTION = 0.6180339887
 
 
 def project(latitude, longitude) -> Optional[Tuple[float, float]]:
@@ -331,14 +349,17 @@ def build(
             # Presentation the template would otherwise have to compute: a busy
             # path is thicker and brighter than a quiet one.
             "width": round(0.5 + 1.6 * weight, 2),
+            # The peak of the fade rather than a fixed opacity: a busy path is
+            # brighter than a quiet one for the seconds it is on screen.
             "opacity": round(0.22 + 0.5 * weight, 2),
-            # Only the busiest paths carry a moving tracer. All of them at once
-            # is a screensaver; the top few are a read of where the pressure is.
             "tracer": len(arcs) < TRACER_ARCS,
-            # Negative delay: every tracer starts mid-flight and at a different
-            # point, so the map never pulses in lockstep. Derived from the index
-            # rather than randomised, so a refresh does not reshuffle it.
-            "delay": -round((len(arcs) * 0.41) % TRACER_SECONDS, 2),
+            # Negative delay: every path starts part-way through its own cycle,
+            # so the map opens already populated instead of building up from an
+            # empty panel. Derived from the index rather than randomised, so a
+            # refresh does not reshuffle which paths are lit together.
+            "delay": -round(
+                ARC_CYCLE_SECONDS * ((len(arcs) * _GOLDEN_FRACTION) % 1.0), 2
+            ),
         })
 
     return ThreatMap(
