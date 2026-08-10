@@ -699,19 +699,42 @@ table.grid td.zero { color: var(--ink-3); }
 .wm-grid .wm-equator { stroke: var(--map-grid); stroke-width: 1; }
 .wm-land { fill: var(--map-land); stroke: var(--map-coast); stroke-width: 0.5; }
 
-/* Arcs: origin to sensor. Faint by default — a hundred of them at full
-   strength is a ball of wool, not a map. */
-.wm-arc { fill: none; stroke: var(--accent); stroke-linecap: round; }
+/* Arcs: origin to sensor, drawn as a strike rather than a fixture. Each path
+   fades in, holds for a beat, fades out, and waits out the rest of its cycle
+   unseen — a hundred permanent lines is a ball of wool, not a map.
+
+   The 30%/9s below is the visible share of ARC_CYCLE_SECONDS in geo.py, which
+   also sets each path's start offset; change one and change the other. The peak
+   is per-path (--wm-arc-peak, busier is brighter) with the resting opacity
+   attribute as the fallback. */
+.wm-arc {
+  fill: none;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  animation: wm-arc-flight 9s ease-in-out infinite;
+}
+@keyframes wm-arc-flight {
+  0%          { opacity: 0; }
+  5%          { opacity: var(--wm-arc-peak, 0.5); }
+  22%         { opacity: var(--wm-arc-peak, 0.5); }
+  30%, 100%   { opacity: 0; }
+}
+
+/* The tracer rides its own arc's cycle, so the moving head and the line under
+   it appear and clear together. Linear throughout: intermediate keyframes would
+   otherwise ease the dash offset too, and the head would visibly stutter. */
 .wm-tracer {
   fill: none;
   stroke: color-mix(in srgb, var(--accent) 45%, #fff);
   stroke-linecap: round;
   stroke-dasharray: 2.5 100;
-  animation: wm-trace 2.8s linear infinite;
+  animation: wm-trace 9s linear infinite;
 }
 @keyframes wm-trace {
-  from { stroke-dashoffset: 102.5; }
-  to   { stroke-dashoffset: 0; }
+  0%          { stroke-dashoffset: 102.5; opacity: 0; }
+  5%          { opacity: 0.9; }
+  22%         { opacity: 0.9; }
+  30%, 100%   { stroke-dashoffset: 0; opacity: 0; }
 }
 
 /* Origins. Hollow, so overlapping cities stay countable. */
@@ -766,8 +789,12 @@ table.grid td.zero { color: var(--ink-3); }
 /* Hovering one mark answers "who reached which sensor?" by dimming everything
    that is not part of the answer. */
 .worldmap.is-focused .wm-origin { opacity: 0.22; }
-.worldmap.is-focused .wm-arc { opacity: 0.05; }
-.worldmap.is-focused .wm-tracer { opacity: 0.08; }
+/* Hovering also holds the map still. Without `animation: none` the fade would
+   outrank these opacities — an animated property beats a plain declaration — and
+   the answer would blink away mid-read. Tracers leave altogether: the lit arc is
+   the answer, and a moving head on a held line only distracts. */
+.worldmap.is-focused .wm-arc { animation: none; opacity: 0.05; }
+.worldmap.is-focused .wm-tracer { display: none; }
 .worldmap.is-focused .wm-sensor { opacity: 0.35; }
 .worldmap.is-focused .is-lit { opacity: 1; }
 .worldmap.is-focused .wm-arc.is-lit { opacity: 0.9; stroke-width: 1.6; }
@@ -811,8 +838,11 @@ table.grid td.zero { color: var(--ink-3); }
   box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px color-mix(in srgb, var(--good) 55%, transparent);
 }
 
+/* A reader who asked for no motion gets the standing lines back, held at the
+   resting opacity on the path itself — a map that pulses paths in and out is
+   precisely the motion they turned off. */
 @media (prefers-reduced-motion: reduce) {
-  .wm-tracer, .wm-sensor .wm-pulse { animation: none; }
+  .wm-arc, .wm-tracer, .wm-sensor .wm-pulse { animation: none; }
   .wm-tracer { display: none; }
   .wm-sensor .wm-pulse { opacity: 0.35; }
 }

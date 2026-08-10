@@ -179,11 +179,18 @@
     <g class="wm-arcs" aria-hidden="true">
       {% for arc in map.arcs %}
         {% for shift in ([0, arc.mirror] if arc.mirror else [0]) %}
+          {#  The `opacity` attribute is the resting value the fade animation
+              overrides — what a reduced-motion reader, who gets no fade, sees
+              instead. `--wm-arc-peak` is the same number handed to the
+              keyframes, which cannot read a presentation attribute.  #}
           <path class="wm-arc" d="{{ arc.d }}"
                 stroke-width="{{ arc.width }}" opacity="{{ arc.opacity }}"
+                style="--wm-arc-peak: {{ arc.opacity }}; animation-delay: {{ arc.delay }}s"
                 {% if shift %}transform="translate({{ shift }} 0)"{% endif %}
                 data-ip="{{ arc.attacker_ip }}" data-node="{{ arc.node_id }}"/>
           {% if arc.tracer %}
+            {# Same delay as the line above: the tracer flies while its own path
+               is lit, never down one that has already gone. #}
             <path class="wm-tracer" d="{{ arc.d }}" pathLength="100"
                   stroke-width="{{ arc.width + 0.5 }}"
                   style="animation-delay: {{ arc.delay }}s"
