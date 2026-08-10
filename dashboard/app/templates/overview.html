@@ -56,10 +56,20 @@
                              else (stats.nodes_stale | number) ~ ' not reporting',
              tone='is-crit' if stats.nodes_stale else 'is-good') }}
 
-  {{ ui.tile('Ingest lag',
-             (stats.avg_ingest_lag_seconds | round(1)) ~ 's',
-             url_for('nodes.index'),
-             'node clock to collector, mean of last 500') }}
+  {#  No ingest-lag tile. The mean it showed is `received_at - timestamp` over
+      the last 500 events by arrival, which measures the live sensor-to-collector
+      path — and a backfill run breaks that reading: events shipped by
+      nodes/cowrie/backfill.py carry Cowrie's original timestamps but arrive the
+      moment the script runs, so their "lag" is the age of the log line, not a
+      delay in the pipeline. Since they are the newest arrivals they take the
+      whole 500-event window, and the tile reports hundreds of hours until 500
+      live events push them out.
+
+      A fleet-posture tile has to be readable at a glance without that caveat,
+      so the figure now lives only on /nodes, next to the per-node mean and
+      worst case and the copy explaining what a draining spool looks like from
+      the collector's side. `stats.avg_ingest_lag_seconds` is still computed and
+      still served by the JSON API — this drops the tile, not the measurement. #}
 </div>
 
 <div class="panel" style="margin-bottom: 14px">
