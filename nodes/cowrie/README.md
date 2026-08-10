@@ -24,6 +24,7 @@ Cowrie (Docker) → cowrie.json → adapter.py (tail + transform) → HTTP POST 
 |---|---|
 | `docker-compose.yml` | Runs the Cowrie honeypot container |
 | `adapter.py` | Tails Cowrie's log across rotation, maps events to the shared format, batches and ships them, with retry on failure |
+| `backfill.py` | Sends events **already** on disk — every `cowrie.json*` including the rotated ones. For history the adapter never sees; safe to re-run |
 | `validator.py` | Checks a batch of events against the shared schema (required fields, allowed event types, allowed `details` keys) |
 | `stub_server.py` | Minimal local Flask server standing in for Part 2's real collector, for local testing |
 | `pyproject.toml` / `uv.lock` | Python dependencies, pinned. This is a uv project like `core/` and `dashboard/` |
@@ -168,6 +169,63 @@ clearing them out is the host's business. And a restart resumes at the **end**
 of the current log, so events that arrived while the adapter was down are not
 shipped: that is the same rule that stops a restart from replaying the entire
 file at the collector.
+
+`backfill.py` is the answer to both, and it's next.
+
+## Backfilling old logs
+
+Those two rules leave real traffic on the floor: everything Cowrie recorded
+before this sensor was wired up to a collector, and everything it recorded
+while the adapter was stopped. `backfill.py` reads it all — every
+`cowrie.json*` in the log directory, archives first, oldest to newest — and
+sends it in one pass:
+
+```bash
+uv run backfill.py                                    # everything on disk
+uv run backfill.py --dry-run                          # say what would be sent
+uv run backfill.py --since 2026-08-07                 # only from then on
+uv run backfill.py cowrie-logs/cowrie.json.2026-08-06 # named files only
+```
+
+It shares `adapter.py`'s event mapping, envelope, `.env` and credentials by
+importing it, so the two cannot drift apart, and it reuses `validator.py` for
+the baseline rules. A gzipped archive is read without unpacking it first.
+
+**Running it twice is safe.** Where the adapter generates a fresh random
+`event_id` per event, backfill derives the id from the event itself, so a
+second run sends the same ids and the collector answers `duplicates` instead of
+inserting a second copy of every session:
+
+```
+91 event(s) sent — collector accepted 91, 0 already had, 0 refused
+91 event(s) sent — collector accepted 0, 91 already had, 0 refused
+```
+
+That only holds *between backfill runs*. Events the live adapter already
+shipped carry its random ids, so backfilling over a window the adapter covered
+does duplicate them — `--since` is there to cut the overlap out, set to
+roughly when the adapter started.
+
+**One bad event would otherwise cost twenty.** The collector validates the
+whole batch before touching the database, so a single event that breaks the
+contract returns 422 and loses every good event travelling with it. Cowrie
+produces such events in the ordinary course of business — an attacker who
+presses Enter logs a `cowrie.command.input` with an empty command, and the
+baseline requires `details.command` to be non-empty. Backfill checks each event
+against the collector's contract first and reports what it dropped, rather than
+finding out twenty at a time:
+
+```
+335 line(s) read from 2 file(s)
+  243 not an event type we ship
+  1 the collector would have refused, and taken their batch down with them:
+      1  details.command must be a non-empty string for command
+```
+
+Batches go out at 20 events, the collector's default `MAX_BATCH_SIZE`;
+`--batch-size` follows it if the aggregator was configured higher. A failed
+send stops the run rather than spooling to `pending_events.jsonl` — there is
+nothing to lose by fixing the problem and running it again.
 
 ## Running locally
 

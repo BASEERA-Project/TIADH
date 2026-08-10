@@ -246,6 +246,11 @@ def consume_lines(f, partial: bytes) -> bytes:
             continue  # skip malformed lines rather than kill the tailer
 
         partial = b""
+        if not isinstance(raw_event, dict):
+            # Valid JSON, but not an event: a bare number or string has no
+            # .get() to give build_envelope, and the AttributeError would take
+            # the tailer — and so this sensor's whole ingest — down with it.
+            continue
         envelope = build_envelope(raw_event)
         if envelope:
             event_queue.put(envelope)
