@@ -183,6 +183,12 @@ class ThreatMap:
     arcs: List[Dict[str, Any]] = field(default_factory=list)
     #: Nodes with no coordinates — named under the map, never guessed at.
     unplaced_sensors: List[Dict[str, Any]] = field(default_factory=list)
+    #: Node ids the traffic names but the fleet does not contain, heaviest
+    #: first. Neither placed nor unplaced: `nodes` has never heard of them, so
+    #: there is no sensor to draw an arc to and nothing for `unplaced_sensors`
+    #: to list. Reported rather than dropped, because the alternative is a
+    #: window's worth of paths quietly missing from the map.
+    unknown_nodes: List[Dict[str, Any]] = field(default_factory=list)
     #: True when there were more origins than the marker cap allows. A count is
     #: deliberately not offered: the query stops at the cap, so the only honest
     #: statement available is "there are more than these".
@@ -297,6 +303,12 @@ def build(
     that arithmetic.
     """
     sensors, unplaced, sensor_index = _sensor_marks(nodes, coordinates or {})
+    # Placed and unplaced together are the fleet. A node id in the traffic that
+    # is in neither is a third case, and the one a direct database write
+    # produces: the collector registers a node, an INSERT does not.
+    fleet = {mark["node_id"] for mark in sensors} | {
+        node.get("node_id") for node in unplaced
+    }
 
     ranked = sorted(origins, key=lambda row: row.get("events") or 0, reverse=True)
     truncated = len(ranked) > max_origins
@@ -328,10 +340,14 @@ def build(
         })
 
     arcs: List[Dict[str, Any]] = []
+    unknown: Dict[str, int] = {}
     heaviest = max((row.get("events") or 0 for row in paths), default=0)
     for row in sorted(paths, key=lambda row: row.get("events") or 0, reverse=True):
         origin = positions.get(row.get("attacker_ip"))
-        sensor = sensor_index.get(row.get("node_id"))
+        node_id = row.get("node_id")
+        sensor = sensor_index.get(node_id)
+        if node_id not in fleet:
+            unknown[node_id] = unknown.get(node_id, 0) + (row.get("events") or 0)
         if origin is None or sensor is None:
             continue
         sensor["events"] += row.get("events") or 0
@@ -367,6 +383,12 @@ def build(
         sensors=sensors,
         arcs=arcs,
         unplaced_sensors=unplaced,
+        unknown_nodes=[
+            {"node_id": node_id, "events": events}
+            for node_id, events in sorted(
+                unknown.items(), key=lambda item: item[1], reverse=True
+            )
+        ],
         truncated=truncated,
         peak_events=peak,
         total_events=total_events,

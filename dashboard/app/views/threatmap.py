@@ -59,6 +59,18 @@ def index():
         max_arcs=current_app.config["MAP_MAX_ARCS"],
     )
 
+    # What the window is a window *onto*. An empty panel otherwise says only
+    # "nothing to draw", which reads as "the map ignored my data" when the rows
+    # are in the table and simply older than the last 24 hours — the shape a
+    # bulk import of historical logs always takes. The remainder is measured
+    # here rather than inferred from the marks, because the marker cap thins
+    # those too and the two reductions must not be confused for each other.
+    extent = db.get_attack_origin_extent()
+    in_window = extent if since is None else db.get_attack_origin_extent(since=since)
+    outside_window = max(
+        0, (extent.get("events") or 0) - (in_window.get("events") or 0)
+    )
+
     stats = db.get_dashboard_overview(
         window_hours=current_app.config["ACTIVITY_WINDOW_HOURS"]
     )
@@ -70,6 +82,10 @@ def index():
         window=window,
         window_label=dict(queries.WINDOW_CHOICES)[window].lower(),
         windows=queries.WINDOW_CHOICES,
+        # Everything the map is eligible to draw, whatever window is selected,
+        # and how much of it this one leaves out.
+        extent=extent,
+        outside_window=outside_window,
         countries=db.get_top_countries(limit=10),
         # Attackers seen at all, against attackers the enricher gave coordinates
         # to — the honest denominator for everything drawn above.

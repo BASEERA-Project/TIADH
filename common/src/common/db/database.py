@@ -1154,6 +1154,37 @@ class Database:
             params,
         )
 
+    def get_attack_origin_extent(self, since: str = None) -> Dict[str, Any]:
+        """
+        How much drawable traffic there is, and when it happened.
+
+        The map draws a *window*; this reports what there was to window. Called
+        with no `since` it describes everything the map could ever draw, which
+        is what makes an empty panel readable: nothing arrived, or everything
+        arrived outside the window — and a batch of historical logs written
+        straight into `events` lands squarely in the second case. Without this,
+        those two cases look identical on screen, and the map appears to be
+        ignoring rows that are sitting in the table.
+
+        Same join and same predicate as :meth:`get_attack_origins`, so it counts
+        exactly what that method is eligible to return, with no GROUP BY or
+        ORDER BY to pay for.
+        """
+        clause = "AND e.timestamp >= :since" if since else ""
+        return self.query_one(
+            f"""
+            SELECT COUNT(*)                      AS events,
+                   COUNT(DISTINCT e.attacker_ip) AS origins,
+                   MIN(e.timestamp)              AS first_seen,
+                   MAX(e.timestamp)              AS last_seen
+              FROM events e
+              JOIN reputation r ON r.attacker_ip = e.attacker_ip
+             WHERE r.latitude IS NOT NULL AND r.longitude IS NOT NULL
+               {clause}
+            """,
+            {"since": since} if since else {},
+        ) or {}
+
     # -- attackers --------------------------------------------------------
 
     _ATTACKER_SELECT = """

@@ -47,10 +47,16 @@ def index():
         max_arcs=current_app.config["MAP_MAX_ARCS"],
     )
 
+    # This screen has no window control, so an empty map here is a dead end
+    # unless it can say whether there is anything outside the last `hours` to
+    # go and look at. The Map screen is where that window opens.
+    extent = db.get_attack_origin_extent()
+
     return render_template(
         "overview.html",
         title="Overview",
         stats=db.get_dashboard_overview(window_hours=hours),
+        map_extent=extent,
         activity=activity,
         activity_hours=hours,
         threat_map=threat_map,
