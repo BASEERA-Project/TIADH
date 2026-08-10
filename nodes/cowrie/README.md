@@ -4,15 +4,18 @@ Deploys and manages Cowrie honeypot nodes for the Distributed Honeypot Threat In
 
 ## Role in the project
 
-This is Part 1 of a 5-part distributed system (see the project's Technical Plan and Baseline documents). It runs SSH honeypot sensors on separate hosts, converts Cowrie's native logs into the shared event envelope defined in the team's frozen baseline, and delivers them to Part 2's central collector over HTTPS.
+This is Part 1 of a 5-part distributed system (see the project's Technical Plan and Baseline documents). It runs SSH honeypot sensors on separate hosts, converts Cowrie's native logs into the shared event envelope defined in the team's frozen baseline, and delivers them to Part 2's central collector over HTTP.
 
 ## Architecture
 
 ```
-Cowrie (Docker) → cowrie.json → adapter.py (tail + transform) → HTTPS POST → collector
-                                       │
-                                       ├─ heartbeat every 60s
-                                       └─ failed batches → pending_events.jsonl → retried every 30s
+Cowrie (Docker) → cowrie.json → adapter.py (tail + transform) → HTTP POST → collector
+                       │               │
+                       │               ├─ heartbeat every 60s
+                       │               └─ failed batches → pending_events.jsonl → retried every 30s
+                       │
+                       └─ rotated daily to cowrie.json.YYYY-MM-DD, and the
+                          adapter follows it (see "Log rotation" below)
 ```
 
 ## Files
@@ -20,7 +23,7 @@ Cowrie (Docker) → cowrie.json → adapter.py (tail + transform) → HTTPS POST
 | File | Purpose |
 |---|---|
 | `docker-compose.yml` | Runs the Cowrie honeypot container |
-| `adapter.py` | Tails Cowrie's logs, maps them to the shared event format, batches and ships them, with retry on failure |
+| `adapter.py` | Tails Cowrie's log across rotation, maps events to the shared format, batches and ships them, with retry on failure |
 | `validator.py` | Checks a batch of events against the shared schema (required fields, allowed event types, allowed `details` keys) |
 | `stub_server.py` | Minimal local Flask server standing in for Part 2's real collector, for local testing |
 | `pyproject.toml` / `uv.lock` | Python dependencies, pinned. This is a uv project like `core/` and `dashboard/` |
@@ -39,7 +42,8 @@ cp .env.example .env
 | `NODE_ID` | `node-02` | This node's ID. Change it per sensor (`node-01`, `node-02`, …). Must be listed in the aggregator's `KNOWN_NODES`. |
 | `NODE_KEY` | `dev-test-key` | This node's secret key. Must match this node's entry in the aggregator's `NODE_KEYS_JSON`. |
 | `COLLECTOR_URL` | `http://localhost:8000/api/events` | Full URL of the collector's `/api/events` endpoint: the aggregator's address on this network, and its `COLLECTOR_PORT` — **8000** unless it was changed in the aggregator's `.env`. `stub_server.py` is on **5000** instead. |
-| `LOG_PATH` | `../cowrie-logs/cowrie.json` | Cowrie's JSON log. The default is relative to the working directory — set an absolute path. |
+| `LOG_PATH` | `./cowrie-logs/cowrie.json` | Cowrie's JSON log — the host side of the mount in `docker-compose.yml`. The default is relative to the **working directory**, so it only resolves when the adapter is started from this directory; set an absolute path if you start it from anywhere else. |
+| `PROTOCOL` | `ssh` | Stamped into every event's `protocol` field. Not in `.env.example`: `docker-compose.yml` publishes Cowrie's SSH port only, so the default is already right. |
 | `COWRIE_UID` / `COWRIE_GID` | `1000` / `1000` | The user the Cowrie **container** runs as. Read by `docker-compose.yml`, not by `adapter.py`. Only set these if this host's account isn't `1000` (`id -u`). |
 
 `cowrie-logs/` and `cowrie-data/` are bind-mounted into the container, and Cowrie
@@ -94,6 +98,50 @@ finds the **aggregator's** root `.env` — a different host's configuration, wit
 beside it or not at all. The only values that have to agree with the aggregator
 are `NODE_ID` and `NODE_KEY`.
 
+## Log rotation
+
+Cowrie does not write to `cowrie.json` forever. Once a day it closes that file,
+renames it to `cowrie.json.2026-08-06`, and creates a new, empty `cowrie.json`
+in its place.
+
+A rename disturbs nothing that already has the file open, so a tailer that
+opened `cowrie.json` at startup follows the log into its archived name — where
+not one more byte will ever be written — while every new event lands in the new
+file under the old name. Nothing errors and nothing crashes: the sensor just
+goes quiet at the first rotation, and stays quiet until someone restarts it.
+
+`adapter.py` checks for this every time it reaches the end of the file, which
+is once a second when nothing is arriving. It compares the inode `LOG_PATH`
+names now against the one it holds open, and when they differ it drains what
+is left of the old file — the rename is Cowrie's last act on it, so whatever
+is still in there is complete — then reopens the new one **from the start**,
+and says so:
+
+```
+./cowrie-logs/cowrie.json was rotated away — reopening
+```
+
+Three neighbouring cases are handled the same way:
+
+- **The log doesn't exist yet.** Starting the adapter before Cowrie no longer
+  kills it with `FileNotFoundError`; it waits, prints that it's waiting, and
+  picks the file up when Cowrie creates it.
+- **The log is emptied in place** instead of renamed — what a `logrotate` rule
+  with `copytruncate` does. The inode doesn't change, so the check above can't
+  see it; the giveaway is a file that has become shorter than the offset being
+  read from, and the adapter starts over from the top of it.
+- **A half-written line.** A line caught mid-write is held until the rest of it
+  arrives, rather than going to `json.loads()` — which would lose that event
+  twice: once as an unparseable fragment, and again when the remainder turned
+  up looking like an unparseable line of its own.
+
+Two things this deliberately does *not* do. Archived `cowrie.json.*` files are
+never read, and nothing in this repo deletes them — they're ignored by git, and
+clearing them out is the host's business. And a restart resumes at the **end**
+of the current log, so events that arrived while the adapter was down are not
+shipped: that is the same rule that stops a restart from replaying the entire
+file at the collector.
+
 ## Running locally
 
 This part can be run and tested entirely on a local machine, without any AWS setup, using the included stub server.
@@ -144,6 +192,21 @@ uv run validator.py pending_events.jsonl
 (only present if a send has failed at least once — see below to force this)
 
 **To test retry/failure handling specifically:** stop `stub_server.py`, trigger another login attempt, and confirm the adapter logs `Failed to send batch... saving to pending_events.jsonl`. Restart the stub server and confirm the pending batch is retried within 30 seconds.
+
+**To test rotation handling specifically:** don't wait a day for it — rotate
+the log by hand, and make Cowrie reopen it:
+
+```bash
+mv cowrie-logs/cowrie.json cowrie-logs/cowrie.json.$(date +%F)
+docker compose restart cowrie
+```
+
+The restart is the part that matters. Renaming alone leaves Cowrie writing to
+the file under its *new* name, because its own handle followed the rename just
+like the adapter's would; restarting is what makes it open a fresh
+`cowrie.json`, which is what a real rotation does. Then log in over SSH again
+and confirm the adapter prints `… was rotated away — reopening` and that the
+new event still arrives at the collector.
 
 ## Integration with the real collector
 

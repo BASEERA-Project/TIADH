@@ -57,7 +57,8 @@ timer alongside the collector and the enricher.
 
 What each one actually does:
 
-- **adapter.py** tails Cowrie's `cowrie.json`, maps the events it cares about
+- **adapter.py** tails Cowrie's `cowrie.json` — following it across the daily
+  rotation that renames it — maps the events it cares about
   onto the Baseline v1.3 envelope, and POSTs them in batches with
   `X-Node-ID` / `X-Node-Key` headers. It sends a heartbeat every 60s, and
   spools failed batches to `pending_events.jsonl`, retried every 30s.
@@ -361,11 +362,11 @@ cd core && uv run pytest          # collector: HTTP, auth, dedupe, contract
 
 Things that will bite during a deployment, all of them real as of this commit:
 
-- **The adapter's default log path is relative.** `LOG_PATH` now comes from the
-  environment, but its default is still `../cowrie-logs/cowrie.json` while
-  `docker-compose.yml` mounts the logs to `./cowrie-logs` — so an adapter run
-  without `LOG_PATH` set only finds them from a directory one level below the
-  compose file. Set an absolute path and stop thinking about it.
+- **The adapter's default log path is relative.** `LOG_PATH` defaults to
+  `./cowrie-logs/cowrie.json`, which is where `docker-compose.yml` mounts the
+  logs — but it resolves against the working directory, so an adapter started
+  from anywhere other than `nodes/cowrie/` finds nothing there. Set an absolute
+  path and stop thinking about it.
 - **`NODE_ID` defaults to `node-02`.** It is an environment variable now, but
   the default is a real node ID rather than an error, so a sensor started
   without one silently claims to be node-02.
