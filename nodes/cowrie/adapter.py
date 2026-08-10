@@ -38,9 +38,55 @@ event_queue = queue.Queue()
 
 PENDING_FILE = "pending_events.jsonl"
 
-# How long to wait before looking at the log again when it has nothing new —
-# also how often a rotation, or a log that hasn't been created yet, is noticed.
-POLL_INTERVAL = 1.0
+
+def env_seconds(name: str, default: float) -> float:
+    """Read one of the timing knobs below from the environment.
+
+    Anything that isn't a positive number is refused and the default kept:
+    zero or less would turn the loop it paces into a busy-wait, and a typo
+    would otherwise quietly change how often this sensor reports — the sort of
+    thing nobody notices until a node looks dead on the dashboard.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+
+    try:
+        seconds = float(raw)
+    except ValueError:
+        print(f"{name}={raw!r} is not a number — keeping the default of {default}s")
+        return default
+
+    if seconds <= 0:
+        print(f"{name}={raw!r} must be greater than zero — keeping the default of {default}s")
+        return default
+
+    return seconds
+
+
+# Every interval this adapter runs on, in seconds, so a sensor can be retuned
+# without editing code. The defaults are the values these loops were hardcoded
+# to, so a node that sets none of them behaves exactly as it did before.
+
+# How long the tailer waits before looking at the log again when it has nothing
+# new — and therefore how quickly a rotation, or a log that hasn't been created
+# yet, is noticed.
+POLL_INTERVAL_SECONDS = env_seconds("POLL_INTERVAL_SECONDS", 1.0)
+
+# How often a heartbeat is queued. This one is a Baseline v1.3 contract value
+# rather than a local preference: the aggregator marks a node offline after
+# three missed beats — NODE_OFFLINE_AFTER_SECONDS, derived from its own copy of
+# this same variable in common/config.py — and the dashboard reports node health
+# in missed heartbeats. Raise it here without raising it there and this node
+# flaps offline between beats.
+HEARTBEAT_INTERVAL_SECONDS = env_seconds("HEARTBEAT_INTERVAL_SECONDS", 60.0)
+
+# How long a partly-filled batch waits before being sent anyway. A batch that
+# reaches 20 events is sent the moment it does, whatever this says.
+BATCH_INTERVAL_SECONDS = env_seconds("BATCH_INTERVAL_SECONDS", 10.0)
+
+# How often events spooled to PENDING_FILE by a failed send are retried.
+RETRY_INTERVAL_SECONDS = env_seconds("RETRY_INTERVAL_SECONDS", 30.0)
 
 # Maps Cowrie's own event names to the baseline's allowed event_type values.
 # Anything not in this dict gets skipped (Cowrie emits some internal events
@@ -224,7 +270,7 @@ def tail_and_process(path: str):
                 # Whatever Cowrie creates from here on is new by definition,
                 # so read it from the top instead of skipping to its end.
                 from_start = True
-                time.sleep(POLL_INTERVAL)
+                time.sleep(POLL_INTERVAL_SECONDS)
                 continue
             waiting = False
             print(f"Tailing {path}")
@@ -258,7 +304,7 @@ def tail_and_process(path: str):
             partial = b""
             continue
 
-        time.sleep(POLL_INTERVAL)
+        time.sleep(POLL_INTERVAL_SECONDS)
 
 
 def build_heartbeat() -> dict:
@@ -277,11 +323,12 @@ def build_heartbeat() -> dict:
 
 
 def heartbeat_loop():
-    """Runs forever in its own thread, printing a heartbeat every 60 seconds."""
+    """Runs forever in its own thread, queueing a heartbeat every
+    HEARTBEAT_INTERVAL_SECONDS."""
     while True:
         envelope = build_heartbeat()
         event_queue.put(envelope)
-        time.sleep(60)
+        time.sleep(HEARTBEAT_INTERVAL_SECONDS)
 
 
 def sender_loop():
@@ -291,12 +338,16 @@ def sender_loop():
 
     while True:
         try:
-            event = event_queue.get(timeout=1)
+            # Capped at a second so the two deadlines below are still checked
+            # promptly on a quiet node, and never longer than the flush
+            # deadline itself, which a sub-second BATCH_INTERVAL_SECONDS would
+            # otherwise overshoot on every pass.
+            event = event_queue.get(timeout=min(1.0, BATCH_INTERVAL_SECONDS))
             batch.append(event)
         except queue.Empty:
             pass
 
-        time_to_flush = (time.time() - last_send) >= 10
+        time_to_flush = (time.time() - last_send) >= BATCH_INTERVAL_SECONDS
         batch_full = len(batch) >= 20
 
         if batch and (time_to_flush or batch_full):
@@ -304,9 +355,10 @@ def sender_loop():
             batch = []
             last_send = time.time()
 
-        # Separately from normal batching: every 30s, check if there's a
-        # backlog of previously-failed events sitting on disk, and retry them.
-        if (time.time() - last_retry_attempt) >= 30:
+        # Separately from normal batching: every RETRY_INTERVAL_SECONDS, check
+        # if there's a backlog of previously-failed events sitting on disk, and
+        # retry them.
+        if (time.time() - last_retry_attempt) >= RETRY_INTERVAL_SECONDS:
             pending = load_and_clear_pending()
             if pending:
                 print(f"Retrying {len(pending)} pending event(s)")

@@ -46,6 +46,32 @@ cp .env.example .env
 | `PROTOCOL` | `ssh` | Stamped into every event's `protocol` field. Not in `.env.example`: `docker-compose.yml` publishes Cowrie's SSH port only, so the default is already right. |
 | `COWRIE_UID` / `COWRIE_GID` | `1000` / `1000` | The user the Cowrie **container** runs as. Read by `docker-compose.yml`, not by `adapter.py`. Only set these if this host's account isn't `1000` (`id -u`). |
 
+### Timing
+
+Every interval the adapter runs on is a variable too, all in seconds, all
+optional. The defaults are the values these loops were hardcoded to, so a
+sensor that sets none of them behaves exactly as it always has.
+
+| Variable | Default | Description |
+|---|---|---|
+| `POLL_INTERVAL_SECONDS` | `1` | How long the tailer waits before looking at `cowrie.json` again when it has nothing new — and so how quickly a rotation is noticed. |
+| `HEARTBEAT_INTERVAL_SECONDS` | `60` | How often this node sends a heartbeat. **Must agree with the aggregator** — see below. |
+| `BATCH_INTERVAL_SECONDS` | `10` | How long a partly-filled batch waits before being sent anyway. A batch that reaches 20 events is sent the moment it does, whatever this says. |
+| `RETRY_INTERVAL_SECONDS` | `30` | How often events spooled to `pending_events.jsonl` by a failed send are retried. Lower it if the link to the aggregator is flaky. |
+
+A value that isn't a positive number is refused rather than obeyed — the
+adapter prints a line saying so and keeps the default. Zero would turn the loop
+it paces into a busy-wait, and a typo would otherwise quietly change how often
+this sensor reports.
+
+`HEARTBEAT_INTERVAL_SECONDS` is the one to be careful with, because it is a
+**Baseline v1.3 contract value and not a local preference**. The aggregator
+marks a node offline after three missed beats — `NODE_OFFLINE_AFTER_SECONDS`,
+which `common/config.py` derives from *its* copy of this same variable — and
+the dashboard reports node health in missed heartbeats. Raise it on a sensor
+without raising it on the aggregator and that node flaps offline between beats,
+while still shipping events perfectly well.
+
 `cowrie-logs/` and `cowrie-data/` are bind-mounted into the container, and Cowrie
 writes its JSON log, sensor `uuid` and SSH host keys into them. The image's own
 user is uid 999, which cannot write to directories owned by the account that
@@ -111,7 +137,8 @@ file under the old name. Nothing errors and nothing crashes: the sensor just
 goes quiet at the first rotation, and stays quiet until someone restarts it.
 
 `adapter.py` checks for this every time it reaches the end of the file, which
-is once a second when nothing is arriving. It compares the inode `LOG_PATH`
+on a quiet node is once every `POLL_INTERVAL_SECONDS` (1 by default). It
+compares the inode `LOG_PATH`
 names now against the one it holds open, and when they differ it drains what
 is left of the old file — the rename is Cowrie's last act on it, so whatever
 is still in there is complete — then reopens the new one **from the start**,
