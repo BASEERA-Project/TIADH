@@ -1,10 +1,10 @@
-# Honeypot Node Deployment (Part 1)
+# Cowrie sensor (Part 1)
 
 Deploys and manages Cowrie honeypot nodes for the Distributed Honeypot Threat Intelligence Aggregator project, and ships their events to the central collector in the team's shared format.
 
 ## Role in the project
 
-This is Part 1 of a 5-part distributed system (see the project's Technical Plan and Baseline documents). It runs SSH honeypot sensors on separate hosts, converts Cowrie's native logs into the shared event envelope defined in the team's frozen baseline, and delivers them to Part 2's central collector over HTTP.
+This is one of the two sensors in Part 1 of a 5-part distributed system (see the project's Technical Plan and Baseline documents) — the other is `../dionaea/`. It runs SSH honeypot sensors on separate hosts, converts Cowrie's native logs into the shared event envelope defined in the team's frozen baseline, and delivers them to Part 2's central collector over HTTP.
 
 ## Architecture
 
@@ -18,17 +18,27 @@ Cowrie (Docker) → cowrie.json → adapter.py (tail + transform) → HTTP POST 
                           adapter follows it (see "Log rotation" below)
 ```
 
+Only the middle step is about Cowrie. Tailing across rotation, batching,
+heartbeating, spooling and retrying are the same on any sensor, so they live in
+`../shipper/` and are shared with the dionaea node. `adapter.py` is Cowrie's
+event mapping and nothing else.
+
 ## Files
 
 | File | Purpose |
 |---|---|
 | `docker-compose.yml` | Runs the Cowrie honeypot container |
-| `adapter.py` | Tails Cowrie's log across rotation, maps events to the shared format, batches and ships them, with retry on failure |
+| `adapter.py` | Maps Cowrie's JSON events onto the shared envelope, and hands them to `shipper` to tail, batch and ship |
 | `backfill.py` | Sends events **already** on disk — every `cowrie.json*` including the rotated ones. For history the adapter never sees; safe to re-run |
 | `validator.py` | Checks a batch of events against the shared schema (required fields, allowed event types, allowed `details` keys) |
 | `stub_server.py` | Minimal local Flask server standing in for Part 2's real collector, for local testing |
 | `pyproject.toml` / `uv.lock` | Python dependencies, pinned. This is a uv project like `core/` and `dashboard/` |
 | `.env.example` | Template for required environment variables |
+
+The last three are one-line entry points into `../shipper/`, which holds the
+code itself. That directory is a **path dependency** of this one, so a sensor
+host wants the repository checked out rather than this directory copied on its
+own — which is what the deployment steps in the root README already assume.
 
 ## Configuration
 
@@ -59,6 +69,7 @@ sensor that sets none of them behaves exactly as it always has.
 | `HEARTBEAT_INTERVAL_SECONDS` | `60` | How often this node sends a heartbeat. **Must agree with the aggregator** — see below. |
 | `BATCH_INTERVAL_SECONDS` | `10` | How long a partly-filled batch waits before being sent anyway. A batch that reaches 20 events is sent the moment it does, whatever this says. |
 | `RETRY_INTERVAL_SECONDS` | `30` | How often events spooled to `pending_events.jsonl` by a failed send are retried. Lower it if the link to the aggregator is flaky. |
+| `SUMMARY_INTERVAL_SECONDS` | `300` | How often the adapter prints a line naming the Cowrie event types it has skipped, and how many of each. A sensor that is dropping most of what it reads must not look the same as a quiet one. |
 
 A value that isn't a positive number is refused rather than obeyed — the
 adapter prints a line saying so and keeps the default. Zero would turn the loop
@@ -188,8 +199,9 @@ uv run backfill.py cowrie-logs/cowrie.json.2026-08-06 # named files only
 ```
 
 It shares `adapter.py`'s event mapping, envelope, `.env` and credentials by
-importing it, so the two cannot drift apart, and it reuses `validator.py` for
-the baseline rules. A gzipped archive is read without unpacking it first.
+importing it, so the two cannot drift apart, and it reuses the shipper's
+validator for the baseline rules. A gzipped archive is read without unpacking
+it first.
 
 **Running it twice is safe.** Where the adapter generates a fresh random
 `event_id` per event, backfill derives the id from the event itself, so a
@@ -217,7 +229,7 @@ finding out twenty at a time:
 
 ```
 335 line(s) read from 2 file(s)
-  243 not an event type we ship
+  243 held nothing we ship
   1 the collector would have refused, and taken their batch down with them:
       1  details.command must be a non-empty string for command
 ```
@@ -234,9 +246,10 @@ This part can be run and tested entirely on a local machine, without any AWS set
 **1. Set up the environment:** nothing to do. Every command below runs through
 `uv run`, which creates `.venv/` and installs the pinned versions from
 `uv.lock` on its own — no separate install step, no virtualenv to activate.
-Shipping events needs only `requests` and `python-dotenv`, so that is all a
-sensor host ever installs. Flask is an opt-in `stub` extra, because the sole
-thing that uses it is the stub collector below.
+Shipping events needs only `requests` and `python-dotenv` (plus `../shipper`,
+built from the checkout), so that is all a sensor host ever installs. Flask is
+an opt-in `stub` extra, because the sole thing that uses it is the stub
+collector below.
 
 **2. Start Cowrie:**
 ```bash

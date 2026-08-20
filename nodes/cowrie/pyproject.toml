@@ -5,12 +5,11 @@ description = "Honeypot sensor: ships Cowrie's events to the aggregator's collec
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    # adapter.py POSTs batches to the collector over HTTPS.
-    "requests>=2.31",
-    # adapter.py reads this node's settings from nodes/cowrie/.env. The
-    # aggregator gets the same behaviour from common/config.py, which a sensor
-    # host does not have.
-    "python-dotenv>=1.0",
+    # Everything a sensor does that is not about Cowrie: tail across rotation,
+    # batch, heartbeat, spool, retry. Shared with the dionaea sensor, so it is
+    # a sibling directory rather than a package on PyPI — see [tool.uv.sources]
+    # below, and clone the repository rather than copying this directory alone.
+    "shipper",
 ]
 
 [project.optional-dependencies]
@@ -18,4 +17,7 @@ dependencies = [
 # An extra rather than a dependency group, so that the thing a sensor host
 # actually does — `uv run adapter.py` — needs no flag and never installs Flask.
 # Only the stub opts in, with `uv run --extra stub stub_server.py`.
-stub = ["flask>=3.1"]
+stub = ["shipper[stub]"]
+
+[tool.uv.sources]
+shipper = { path = "../shipper" }

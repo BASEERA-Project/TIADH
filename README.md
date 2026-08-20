@@ -342,7 +342,9 @@ core/       the aggregator — one uv project, one process in deployment
 dashboard/  Flask read model over the database (Part 5)
   Dockerfile           the same read model behind waitress; mounts tiadh_db
 nodes/      sensor deployment (Part 1)
-  cowrie/              docker-compose, adapter, backfill, validator, stub collector
+  shipper/             the sensor half that is not about the honeypot: tail a
+                       log across rotation, batch, heartbeat, spool, retry
+  cowrie/              docker-compose + Cowrie's event mapping
                        its own uv project — no `common`, it runs on another host
 ```
 
