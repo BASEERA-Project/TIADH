@@ -32,8 +32,15 @@ ALLOWED_DETAILS_KEYS = {
 
 #: Section 1: `sessions.protocol` is a CHECK constraint on the aggregator, so a
 #: protocol outside this set is refused at the far end however well-formed the
-#: rest of the event is.
-ALLOWED_PROTOCOLS = {"ssh", "telnet", "ftp", "smb"}
+#: rest of the event is. Keep it in step with `common/db/validation.py`.
+#:
+#: The first four are Baseline v1.3's; the rest were added so a dionaea sensor
+#: could report more than its FTP and SMB traffic.
+ALLOWED_PROTOCOLS = {
+    "ssh", "telnet", "ftp", "smb",
+    "http", "mysql", "mssql", "sip", "tftp", "upnp",
+    "mqtt", "memcache", "mongo", "printer", "pptp", "epmap",
+}
 
 
 def validate_event(event: dict) -> list[str]:

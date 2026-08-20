@@ -50,28 +50,46 @@ SETTINGS = load_settings(
 # dionaea 0.11.0 rather than guessed, which is why the casing is uneven
 # ('SipSession', 'Memcache', 'TftpServerHandler').
 #
-# Baseline v1.3 allows four protocols and no more: `sessions.protocol` is a
-# CHECK constraint in the frozen schema, so an event naming anything else is
-# refused by the aggregator however well-formed the rest of it is. Two of those
-# four — ftp and smb — are in the contract precisely because dionaea was always
-# the planned second sensor, and these are they.
+# `sessions.protocol` is a CHECK constraint on the aggregator, so a value not
+# in `common/db/validation.ALLOWED_PROTOCOLS` is refused at the far end however
+# well-formed the rest of the event is. Every right-hand side below is in that
+# list; adding a service here means adding it there too, and to the schema.
 #
-# Everything else dionaea speaks is listed in UNMAPPED_PROTOCOLS below, and
-# named at startup, rather than dropped quietly.
+# ftp and smb were in Baseline v1.3 from the start, because dionaea was always
+# the planned second sensor. The rest were added to the contract for this node.
 PROTOCOL_MAP = {
     "ftpd": "ftp",
     "smbd": "smb",
+    "httpd": "http",
+    "mysqld": "mysql",
+    "mssqld": "mssql",
+    "SipSession": "sip",
+    "TftpServerHandler": "tftp",
+    "upnpd": "upnp",
+    "mqttd": "mqtt",
+    "Memcache": "memcache",
+    "mongod": "mongo",
+    "printerd": "printer",
+    "pptpd": "pptp",
+    "epmapper": "epmap",
 }
 
-# The rest of dionaea's services, kept here so that startup can name what this
-# sensor is leaving on the floor instead of reporting silence. Widening the
-# baseline's protocol set is a team decision, not this file's.
+# What still does not ship, kept here so that startup can name it instead of
+# reporting silence.
 UNMAPPED_PROTOCOLS = (
-    "httpd", "mysqld", "mssqld", "SipSession", "TftpServerHandler", "upnpd",
-    "mqttd", "Memcache", "mongod", "printerd", "pptpd", "epmapper", "blackhole",
-    # dionaea's own outbound fetches and its FTP data channels. These are not
-    # attacker connections even when their protocol maps, so they stay out.
-    "ftpctrl", "ftpdata", "ftpdatacon", "mirrorc", "mirrord",
+    # dionaea's catch-all sink for ports with no service behind them. Every
+    # connection to it is a port scan hit and worth knowing about, but
+    # 'blackhole' is not a protocol and there is nothing honest to call it.
+    "blackhole",
+    # The second channel of an FTP transfer. It belongs to a session we are
+    # already reporting through `ftpd`, and shipping it would split one
+    # attacker's LIST or RETR across two sessions.
+    "ftpdata", "ftpdatacon",
+    # Connections dionaea makes, rather than accepts: fetching a payload an
+    # exploit pointed it at, or mirroring traffic back. The remote end is a
+    # malware host, not the attacker, and calling it an attacker_ip would put
+    # someone else's address in the threat feed.
+    "ftpctrl", "mirrorc", "mirrord",
 )
 
 # --------------------------------------------------------------------------
@@ -212,8 +230,8 @@ def shippable(raw_protocol, session_id: str, attacker_ip, count_skips: bool) -> 
     """Common part of both formats: is this connection one we can represent?
 
     Returns the fields every envelope needs, or None — having counted why —
-    when the protocol is outside the baseline's four or there is no attacker
-    behind the connection.
+    when the contract has no protocol value for this service, or there is no
+    attacker behind the connection.
     """
     protocol = PROTOCOL_MAP.get(raw_protocol)
     if protocol is None:
@@ -490,8 +508,8 @@ def summarise() -> str | None:
             for name, count in sorted(skipped_protocols.items(), key=lambda i: -i[1])[:6]
         )
         lines.append(
-            f"Skipped {total} connection(s): {listed} — Baseline v1.3 allows "
-            f"{sorted(set(PROTOCOL_MAP.values()))} and nothing else"
+            f"Skipped {total} connection(s): {listed} — the contract has no "
+            f"protocol value for them"
         )
         skipped_protocols.clear()
     if skipped_origins:
@@ -508,17 +526,17 @@ def summarise() -> str | None:
 def describe_coverage() -> str:
     """What this sensor can and cannot report, said once at startup.
 
-    On a dionaea node this is not decoration. Most of what an exposed honeypot
-    sees arrives on ports Baseline v1.3 has no protocol value for, so a sensor
-    that only printed 'Tailing ...' would look identical whether it was
-    shipping everything or a tenth of it.
+    On a dionaea node this is not decoration: what a sensor is allowed to
+    represent has changed once already, and a node started against an
+    aggregator on the older contract will have most of its events refused. A
+    line naming the map makes that a five-second diagnosis instead of a
+    puzzling `rejected` count.
     """
     shipped = ", ".join(f"{name}→{value}" for name, value in sorted(PROTOCOL_MAP.items()))
     others = [p for p in UNMAPPED_PROTOCOLS if p not in PROTOCOL_MAP]
     return (
-        f"Shipping {shipped}. dionaea's other {len(others)} service(s) have no "
-        f"Baseline v1.3 protocol and are counted, not shipped: "
-        f"{', '.join(others[:6])}, …"
+        f"Shipping {len(PROTOCOL_MAP)} of dionaea's services: {shipped}.\n"
+        f"Counted but not shipped: {', '.join(others)}."
     )
 
 

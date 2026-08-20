@@ -173,10 +173,9 @@ Confirm the loop closed: `ssh -p 2222 root@<sensor>` for Cowrie, or an FTP
 login attempt against `<sensor>:21` for dionaea, then watch the session appear
 on the dashboard's Sessions screen.
 
-A dionaea sensor has one thing to read before deploying it: Baseline v1.3
-allows four protocol values, so only its FTP and SMB traffic can be
-represented, and it reports the rest as counts rather than shipping it. See
-`nodes/dionaea/README.md` ("What gets shipped, and what does not").
+A dionaea sensor publishes a port per service it can report — fourteen of them,
+including 80, which is the one likely to collide with something already on that
+host. See `nodes/dionaea/README.md` ("What gets shipped, and what does not").
 
 ### Running the pieces separately
 
@@ -392,11 +391,13 @@ Things that will bite during a deployment, all of them real as of this commit:
   the Cowrie sensor, `node-03` for the dionaea one — so a sensor started
   without one silently claims to be that node. Two sensors of the same kind on
   one network will both claim it unless each `.env` says otherwise.
-- **Most of what a dionaea sensor sees cannot be shipped.** The baseline allows
-  four protocol values and dionaea speaks twenty; only `ftpd` and `smbd` have
-  somewhere to go. The adapter counts and reports the rest rather than dropping
-  them quietly, and the compose file publishes only the two ports it can
-  represent, but it is a real ceiling on what that node contributes.
+- **A protocol lives in three places.** `sessions.protocol`'s CHECK constraint
+  in `schema.sql`, `ALLOWED_PROTOCOLS` in `common/db/validation.py`, and the
+  sending node's own map. A value in the validator but not the schema is an
+  event the collector accepts and then fails to store. `initialize_schema()`
+  rebuilds `sessions` when it finds a database on the older, narrower list —
+  SQLite cannot alter a CHECK in place — so the aggregator has to be started
+  once on this version before a dionaea node ships anything but FTP or SMB.
 - **The abuse score needs a key to exist at all.** `abuse_score` is now a real
   AbuseIPDB lookup, but with no `ABUSEIPDB_API_KEY` set the enricher leaves the
   column NULL — geolocation and the local profile score still work, and

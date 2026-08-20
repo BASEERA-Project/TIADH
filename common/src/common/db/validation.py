@@ -41,7 +41,20 @@ ALLOWED_EVENT_TYPES = (
     "heartbeat",
 )
 
-ALLOWED_PROTOCOLS = ("ssh", "telnet", "ftp", "smb")
+#: Must stay in step with the CHECK constraint on `sessions.protocol` in
+#: schema.sql — a value this allows and that one does not is an event the
+#: collector accepts and then fails to store, which is the worst of the three
+#: outcomes.
+#:
+#: The first four are Baseline v1.3's. The rest are a post-v1.3 amendment,
+#: agreed so that a dionaea sensor can report more than its FTP and SMB
+#: traffic; dionaea speaks all of them, and without a value to name them by
+#: they could only be counted and dropped.
+ALLOWED_PROTOCOLS = (
+    "ssh", "telnet", "ftp", "smb",
+    "http", "mysql", "mssql", "sip", "tftp", "upnp",
+    "mqtt", "memcache", "mongo", "printer", "pptp", "epmap",
+)
 
 #: Every event carries every one of these keys. Absent != null.
 TOP_LEVEL_FIELDS = (

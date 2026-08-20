@@ -46,53 +46,74 @@ out rather than this directory copied on its own.
 
 ## What gets shipped, and what does not
 
-This is the thing to understand before deploying this node.
+`sessions.protocol` is a CHECK constraint on the aggregator, so a protocol the
+contract has no value for is refused there however well-formed the rest of the
+event is. Fourteen of dionaea's services have one — `ftp` and `smb` from
+Baseline v1.3, the other twelve added by Amendment 1 for this sensor:
 
-Baseline v1.3 allows four protocol values — `ssh`, `telnet`, `ftp`, `smb` — and
-`sessions.protocol` is a CHECK constraint in the frozen schema, so an event
-naming anything else is refused by the aggregator however well-formed the rest
-of it is. Two of those four are in the contract precisely because dionaea was
-the planned second sensor:
+| dionaea service | shipped as | | dionaea service | shipped as |
+|---|---|---|---|---|
+| `ftpd` | `ftp` | | `TftpServerHandler` | `tftp` |
+| `smbd` | `smb` | | `upnpd` | `upnp` |
+| `httpd` | `http` | | `mqttd` | `mqtt` |
+| `mysqld` | `mysql` | | `Memcache` | `memcache` |
+| `mssqld` | `mssql` | | `mongod` | `mongo` |
+| `SipSession` | `sip` | | `printerd` | `printer` |
+| `epmapper` | `epmap` | | `pptpd` | `pptp` |
 
-| dionaea service | shipped as |
-|---|---|
-| `ftpd` | `ftp` |
-| `smbd` | `smb` |
+Three things still do not ship, and are **counted and reported, never silently
+dropped**:
 
-Everything else dionaea speaks — `httpd`, `mysqld`, `mssqld`, `SipSession`,
-`TftpServerHandler`, `upnpd`, `mqttd`, `Memcache`, `mongod`, `printerd`,
-`pptpd`, `epmapper`, `blackhole` — has no value in the contract to be named by.
-Those connections are **counted and reported, never silently dropped**. The
-adapter says so at startup:
+- `blackhole`, dionaea's sink for ports with nothing behind them. Every
+  connection to it is a port-scan hit worth knowing about, but "blackhole" is
+  not a protocol and there is nothing honest to call it.
+- `ftpdata` / `ftpdatacon`, the second channel of an FTP transfer. That belongs
+  to a session already being reported through `ftpd`; shipping it would split
+  one attacker's `RETR` across two sessions.
+- `ftpctrl`, `mirrorc`, `mirrord` — connections dionaea *makes* rather than
+  accepts, fetching a payload an exploit pointed it at. The remote end is a
+  malware host, not the attacker, and recording it as `attacker_ip` would put
+  someone else's address in the exported threat feed.
+
+The adapter names all of this at startup:
 
 ```
-Shipping ftpd→ftp, smbd→smb. dionaea's other 18 service(s) have no
-Baseline v1.3 protocol and are counted, not shipped: httpd, mysqld, …
+Shipping 14 of dionaea's services: Memcache→memcache, SipSession→sip, …
+Counted but not shipped: blackhole, ftpdata, ftpdatacon, ftpctrl, mirrorc, mirrord.
 ```
 
-and again every `SUMMARY_INTERVAL_SECONDS` for as long as it keeps happening:
+and reports what it actually skipped every `SUMMARY_INTERVAL_SECONDS`:
 
 ```
-Skipped 412 connection(s): httpd (300), mysqld (112) — Baseline v1.3
-allows ['ftp', 'smb'] and nothing else
+Skipped 412 connection(s): blackhole (400), ftpdata (12) — the contract
+has no protocol value for them
 ```
 
-`docker-compose.yml` therefore publishes **only ports 21 and 445**. Dionaea is
-listening on the rest inside the container; there is no point inviting traffic
-this sensor can only count. Widening the contract is a team decision — see the
-change-control note at the end of the baseline document — and if it is taken,
-this file's `PROTOCOL_MAP` is where the rest gets added.
+`docker-compose.yml` publishes one port per shipped service, so the honeypot is
+reachable on exactly what it can report. **Port 80 is the usual collision** on
+a host that runs anything else; move the left-hand side of that line if so.
 
-Within those two protocols, the mapping is:
+Adding another service means three files, not one: `PROTOCOL_MAP` here,
+`ALLOWED_PROTOCOLS` in `common/db/validation.py`, and the CHECK constraint in
+`common/db/schema.sql` — plus a line in the baseline's amendments table. A
+value in one and not the others is an event the collector accepts and then
+fails to store.
+
+The event mapping itself is:
 
 | dionaea incident | event |
 |---|---|
 | `dionaea.connection.tcp.accept` / `.tls.accept` / `.tcp.reject` | `connection` |
-| `dionaea.modules.python.ftp.login` | `login_attempt` |
-| `dionaea.modules.python.ftp.command` | `command` |
+| `...python.ftp.login`, `...mysql.login`, `...mssql.login` | `login_attempt` |
+| `...python.ftp.command`, `...mysql.command`, `...mssql.cmd`, `...sip.command`, `...mqtt.publish`, `...mqtt.subscribe` | `command` |
 | `dionaea.download.offer` | `file_download` (the URL an exploit asked for) |
 | `dionaea.download.complete.hash` | `file_download` (the file it got, with its md5) |
 | `dionaea.connection.free` | `session_end` |
+
+Each module names its fields differently — FTP's arguments are a list, MQTT's
+are a scalar, MySQL's command is an integer opcode — so the command mapping is
+a lookup per origin rather than a rule, and every one of them was read off real
+dionaea 0.11.0 output rather than its documentation.
 
 Two deliberate omissions:
 
