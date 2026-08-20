@@ -48,7 +48,13 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from common import config
-from common.db.validation import normalize_event, utc_ago, utc_now, validate_event
+from common.db.validation import (
+    ALLOWED_PROTOCOLS,
+    normalize_event,
+    utc_ago,
+    utc_now,
+    validate_event,
+)
 
 log = logging.getLogger(__name__)
 
@@ -157,16 +163,100 @@ class Database:
     # -- schema -----------------------------------------------------------
 
     def initialize_schema(self, schema_path: Path | str = None) -> None:
-        """Create every table, index and view. Safe to call repeatedly."""
+        """Create every table, index and view. Safe to call repeatedly.
+
+        Migrations run first, because `CREATE TABLE IF NOT EXISTS` does nothing
+        at all to a table that already exists — including one whose constraints
+        no longer match the DDL beside it. The script that follows then puts
+        back anything a migration had to drop.
+        """
         schema_file = Path(schema_path or config.SCHEMA_PATH)
         if not schema_file.exists():
             raise StorageError(f"schema file not found: {schema_file}")
 
         ddl = schema_file.read_text(encoding="utf-8")
+
+        # Its own transaction: executescript() commits whatever is open before
+        # it runs, so a migration sharing this one would be committed early and
+        # in pieces.
+        with self.transaction() as conn:
+            self._widen_session_protocols(conn)
+
         with self.transaction() as conn:
             conn.executescript(ddl)
             conn.execute(f"PRAGMA user_version = {self.schema_user_version()}")
         log.info("schema initialised at %s", self.path)
+
+    @staticmethod
+    def _widen_session_protocols(conn: sqlite3.Connection) -> None:
+        """Rebuild `sessions` when its protocol CHECK is the pre-dionaea one.
+
+        SQLite has no way to alter a CHECK constraint, so the only route is the
+        documented twelve-step dance: build the table again, copy the rows
+        across, and swap the names. Without it, a database created before the
+        protocol list was widened silently keeps the old four and refuses every
+        dionaea event outside FTP and SMB — as a constraint failure at insert
+        time, long after the collector has said 200.
+
+        Deliberately not gated on `PRAGMA user_version`. The condition that
+        matters is what the constraint actually says, which is readable
+        directly and is true even of a database that predates the version
+        stamp or was restored from a backup of one. Reading it also makes the
+        check idempotent for free: once the table is wide enough, this is a
+        single cheap SELECT on every subsequent startup.
+        """
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sessions'"
+        ).fetchone()
+        if row is None or not row["sql"]:
+            return  # fresh database — the DDL that follows creates it correctly
+
+        existing = row["sql"]
+        missing = [p for p in ALLOWED_PROTOCOLS if f"'{p}'" not in existing]
+        if not missing:
+            return
+
+        log.info("migrating sessions.protocol: adding %s", ", ".join(missing))
+
+        # DDL takes no bind parameters, so the list is interpolated. These are
+        # this module's own constants, never anything a node sent.
+        allowed = ", ".join(f"'{p}'" for p in ALLOWED_PROTOCOLS)
+
+        # The view has to go first. From 3.25 SQLite re-parses every schema
+        # object during ALTER TABLE ... RENAME, and `sessions_public` selects
+        # from a `sessions` that does not exist between the DROP and the
+        # RENAME — which aborts the rename with "no such table: main.sessions".
+        # The DDL script recreates it, unchanged, immediately after this.
+        conn.execute("DROP VIEW IF EXISTS sessions_public")
+        conn.execute(
+            f"""
+            CREATE TABLE sessions_migrated (
+                session_id  TEXT PRIMARY KEY,
+                node_id     TEXT NOT NULL,
+                attacker_ip TEXT,
+                protocol    TEXT CHECK (protocol IN ({allowed})),
+                username    TEXT,
+                password    TEXT,
+                start_time  TEXT,
+                end_time    TEXT,
+                status      TEXT NOT NULL DEFAULT 'active'
+                            CHECK (status IN ('active', 'closed', 'failed')),
+                FOREIGN KEY (node_id) REFERENCES nodes (node_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO sessions_migrated
+                (session_id, node_id, attacker_ip, protocol,
+                 username, password, start_time, end_time, status)
+            SELECT session_id, node_id, attacker_ip, protocol,
+                   username, password, start_time, end_time, status
+              FROM sessions
+            """
+        )
+        conn.execute("DROP TABLE sessions")
+        conn.execute("ALTER TABLE sessions_migrated RENAME TO sessions")
 
     @staticmethod
     def schema_user_version() -> int:

@@ -5,6 +5,14 @@
 
 **Scope:** Cowrie sensors deployed on separate VMs, central collector, SQLite storage, IP enrichment, alerts, dashboard, and JSON/CSV export. Dionaea and STIX/TAXII are stretch goals.
 
+### Amendments since the freeze
+
+| # | Change | Reason |
+|---|---|---|
+| 1 | `sessions.protocol` accepts twelve more values — see the table in Section 1 | The dionaea sensor was built (stretch goal reached). Dionaea serves fourteen services and v1.3 could name two of them, so the other twelve could only be counted and dropped. |
+
+Amendment 1 is additive: no value that was legal became illegal, and no sensor already shipping had to change. Everything else in this document is as frozen. `common/db/validation.py` and `common/db/schema.sql` are the executable copy of these rules, and `Database.initialize_schema()` migrates a database created before the amendment.
+
 ## 1. Central Schema
 
 **Database:** SQLite for Version 1.  
@@ -27,8 +35,21 @@
 | `session_id` | TEXT PRIMARY KEY | Honeypot session ID |
 | `node_id` | TEXT | References `nodes.node_id` |
 | `attacker_ip` | TEXT | Observed remote IP |
-| `protocol` | TEXT | `ssh`, `telnet`, `ftp`, or `smb` |
+| `protocol` | TEXT | One of the values below |
 | `username` | TEXT NULL | Attempted username |
+
+**Allowed `protocol` values.** The first four are v1.3's; the rest are Amendment 1.
+
+| Value | Sensor | Value | Sensor |
+|---|---|---|---|
+| `ssh` | Cowrie | `tftp` | dionaea |
+| `telnet` | Cowrie | `upnp` | dionaea |
+| `ftp` | dionaea | `mqtt` | dionaea |
+| `smb` | dionaea | `memcache` | dionaea |
+| `http` | dionaea | `mongo` | dionaea |
+| `mysql` | dionaea | `printer` | dionaea |
+| `mssql` | dionaea | `pptp` | dionaea |
+| `sip` | dionaea | `epmap` | dionaea |
 | `password` | TEXT NULL | Sensitive; mask by default |
 | `start_time` | TEXT | Session start |
 | `end_time` | TEXT NULL | Session end |
@@ -207,7 +228,7 @@ X-Node-Key: <secret-for-node-01>
 Database: SQLite
 Node IDs: node-01, node-02, node-03
 Required honeypot: Cowrie
-Optional honeypot: Dionaea
+Optional honeypot: Dionaea  (built — see Amendment 1)
 Event transport: HTTPS POST
 Central endpoint: POST /api/events
 Event format: This document, Section 2
@@ -216,3 +237,5 @@ Stretch goals: STIX/TAXII, advanced correlation, additional honeypots
 ```
 
 **Change control:** Do not change table names, field names, allowed event types, the `details` contract, or endpoint behavior without group agreement. Members can use locally created JSON fixture events matching Section 2 until live sensors are available.
+
+Anything agreed after the freeze goes in the amendments table at the top of this document, with its reason, and stays additive wherever possible — so that a part written against an earlier reading of this document keeps working.

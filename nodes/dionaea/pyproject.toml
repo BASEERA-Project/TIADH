@@ -1,13 +1,13 @@
 [project]
-name = "cowrie-node"
+name = "dionaea-node"
 version = "0.1.0"
-description = "Honeypot sensor: ships Cowrie's events to the aggregator's collector"
+description = "Honeypot sensor: ships dionaea's events to the aggregator's collector"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    # Everything a sensor does that is not about Cowrie: tail across rotation,
-    # batch, heartbeat, spool, retry. Shared with the dionaea sensor, so it is
-    # a sibling directory rather than a package on PyPI — see [tool.uv.sources]
+    # Everything a sensor does that is not about dionaea: tail across rotation,
+    # batch, heartbeat, spool, retry. Shared with the Cowrie sensor, so it is a
+    # sibling directory rather than a package on PyPI — see [tool.uv.sources]
     # below, and clone the repository rather than copying this directory alone.
     "shipper",
 ]

@@ -1,0 +1,24 @@
+[project]
+name = "shipper"
+version = "0.1.0"
+description = "Shared sensor machinery: tail a honeypot log across rotation, batch, ship, retry"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # The sender POSTs batches to the collector.
+    "requests>=2.31",
+    # Each sensor reads its settings from the .env beside its adapter. The
+    # aggregator gets the same behaviour from common/config.py, which a sensor
+    # host does not have.
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+# stub_server.py stands in for the collector when testing a sensor on its own.
+# An extra rather than a dependency, so that the thing a sensor host actually
+# does — `uv run adapter.py` — needs no flag and never installs Flask.
+stub = ["flask>=3.1"]
+
+[build-system]
+requires = ["uv_build>=0.11.32,<0.12.0"]
+build-backend = "uv_build"

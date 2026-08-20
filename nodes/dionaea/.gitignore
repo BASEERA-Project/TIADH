@@ -1,0 +1,16 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+pending_events.jsonl
+
+# dionaea's runtime output: its JSON and text logs, the SQLite log, captured
+# malware, and the bistream recordings. The empty directory skeleton is tracked
+# (see the .gitkeep files) so that Docker does not create these paths as root
+# on a fresh clone — dionaea drops privileges to uid 1000 and could then write
+# to neither. Contents are ignored; nothing dionaea captures belongs in git,
+# least of all the binaries.
+dionaea-logs/*
+dionaea-data/*
+!dionaea-logs/.gitkeep
+!dionaea-data/.gitkeep

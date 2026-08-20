@@ -173,7 +173,7 @@ wheels = [
 ]
 
 [[package]]
-name = "cowrie-node"
+name = "dionaea-node"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

@@ -28,11 +28,22 @@ CREATE TABLE IF NOT EXISTS nodes (
 -- -------------------------------------------------------------------------
 -- sessions — one row per honeypot session, derived from the event stream
 -- -------------------------------------------------------------------------
+-- The protocol list below is a post-v1.3 amendment, agreed to let the dionaea
+-- sensor report more than two of its services. v1.3 allowed ssh, telnet, ftp
+-- and smb; everything after 'smb' on that line is new. Nothing else about this
+-- table changed, and no existing value stopped being legal.
+--
+-- SQLite cannot ALTER a CHECK constraint, so a database created before this
+-- keeps the old four and rejects the rest. `Database.initialize_schema()`
+-- rebuilds the table when it finds that — see `_widen_session_protocols`.
 CREATE TABLE IF NOT EXISTS sessions (
     session_id  TEXT PRIMARY KEY,                  -- namespaced, e.g. 'node-01:a1b2c3d4'
     node_id     TEXT NOT NULL,
     attacker_ip TEXT,
-    protocol    TEXT CHECK (protocol IN ('ssh', 'telnet', 'ftp', 'smb')),
+    protocol    TEXT CHECK (protocol IN ('ssh', 'telnet', 'ftp', 'smb',
+                                         'http', 'mysql', 'mssql', 'sip',
+                                         'tftp', 'upnp', 'mqtt', 'memcache',
+                                         'mongo', 'printer', 'pptp', 'epmap')),
     username    TEXT,                              -- last username seen
     password    TEXT,                              -- SENSITIVE: never leaves this table unmasked
     start_time  TEXT,
