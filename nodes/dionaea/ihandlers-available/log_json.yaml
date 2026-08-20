@@ -5,8 +5,11 @@
 # dionaea-logs/dionaea.json. adapter.py reads either format without being told
 # which.
 #
+# KEEP THIS FILE PURE ASCII, comments included - see log_incident.yaml for what
+# one stray em dash does to it.
+#
 # What you give up by choosing it, all of it structural rather than a matter of
-# taste — see this node's README:
+# taste. See this node's README:
 #
 #   * no captured malware. log_json handles connections, credentials and FTP
 #     commands, and nothing else. dionaea.download.* incidents pass it by, so
@@ -18,7 +21,7 @@
 # What you gain: it is the documented, stable handler, and the one an existing
 # dionaea deployment is most likely to already have on.
 #
-# The absolute three-slash URL matters here too — see log_incident.yaml.
+# The absolute three-slash URL matters here too. See log_incident.yaml.
 - name: log_json
   config:
     # Set to true for an ELK pipeline. It transposes the credential and command

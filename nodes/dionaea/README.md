@@ -167,22 +167,43 @@ are attaching this to a dionaea that already writes `dionaea.json`, mount
 `ihandlers-available/log_json.yaml` instead and point `LOG_PATH` at
 `dionaea-logs/dionaea.json`. Its `flat_data: true` mode is read too.
 
-### The URL that has to be absolute
+### Two ways to get a honeypot that writes no JSON
 
-Dionaea's own shipped templates configure the handler as
-`file://var/lib/dionaea/dionaea.json`. That is a two-slash URL, so `urlparse`
-reads `var` as the *host* and `/lib/dionaea/dionaea.json` as the path, opening
-it fails, and the loader swallows the error. Dionaea then runs perfectly
-normally and writes no JSON at all. The only sign is one line, in
-`dionaea-logs/dionaea.log`:
+Both of these leave dionaea running perfectly normally, accepting connections
+and logging to `dionaea.sqlite`, while the file this adapter tails is never
+created. Neither stops the container, so the only way to notice is to look.
+
+**The URL has to be absolute.** Dionaea's own shipped templates configure the
+handler as `file://var/lib/dionaea/dionaea.json`. That is a two-slash URL, so
+`urlparse` reads `var` as the *host* and `/lib/dionaea/dionaea.json` as the
+path; opening it fails and the loader swallows the error:
 
 ```
 log_incident ...-critical: Unable to open file /lib/dionaea/dionaea_incident.json
                            Error message 'No such file or directory'
 ```
 
-Both files in this directory use the absolute three-slash form. If you write
-your own, do the same.
+**The config file has to be pure ASCII, comments included.** Dionaea decodes
+its YAML as ASCII, so a single non-ASCII byte anywhere in the file — an em dash
+in a comment will do it — raises `UnicodeDecodeError`, the whole file fails to
+parse, and the ihandler is never configured at all:
+
+```
+python ...module.c:1039-warning: UnicodeDecodeError at
+UnicodeDecodeError('ascii', b"# Turns on the JSON log ...", 281, 282, ...)
+```
+
+Note what that error contains: the file's own text, quoted back. If a comment
+in it happens to mention "unable to open", a grep for that phrase matches the
+quoted comment rather than a real failure — so check for the two error
+signatures specifically, not for prose:
+
+```bash
+grep -icE "UnicodeDecodeError|critical: Unable to open" dionaea-logs/dionaea.log
+```
+
+Both files in this directory are ASCII and use the three-slash form. If you
+write your own, do both.
 
 ## Configuration
 
@@ -292,12 +313,13 @@ docker compose up -d
 docker compose logs --tail 5      # should end at "Starting dionaea ..."
 ```
 
-Confirm the JSON log is actually being written — this is the step that catches
-a broken handler config:
+Confirm the JSON log is actually being written. This is the step that catches a
+broken handler config, and it is worth doing every time you touch one — both
+failure modes leave the honeypot running and look like a quiet network:
 
 ```bash
-ls -l dionaea-logs/dionaea_incident.json
-grep -i "unable to open" dionaea-logs/dionaea.log     # should print nothing
+ls -l dionaea-logs/dionaea_incident.json                        # must exist
+grep -icE "UnicodeDecodeError|critical: Unable to open" dionaea-logs/dionaea.log   # must be 0
 ```
 
 **2. Start the stub collector** in its own terminal:
