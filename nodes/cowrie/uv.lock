@@ -187,8 +187,8 @@ stub = [
 
 [package.metadata]
 requires-dist = [
-    { name = "shipper", directory = "../shipper" },
-    { name = "shipper", extras = ["stub"], marker = "extra == 'stub'", directory = "../shipper" },
+    { name = "shipper", editable = "../shipper" },
+    { name = "shipper", extras = ["stub"], marker = "extra == 'stub'", editable = "../shipper" },
 ]
 provides-extras = ["stub"]
 
@@ -329,7 +329,7 @@ wheels = [
 [[package]]
 name = "shipper"
 version = "0.1.0"
-source = { directory = "../shipper" }
+source = { editable = "../shipper" }
 dependencies = [
     { name = "python-dotenv" },
     { name = "requests" },

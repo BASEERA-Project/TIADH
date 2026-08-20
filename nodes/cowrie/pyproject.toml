@@ -20,4 +20,4 @@ dependencies = [
 stub = ["shipper[stub]"]
 
 [tool.uv.sources]
-shipper = { path = "../shipper" }
+shipper = { path = "../shipper", editable = true }

@@ -65,7 +65,7 @@ from disagreeing about what an event is.
 
 ```toml
 [tool.uv.sources]
-shipper = { path = "../shipper" }
+shipper = { path = "../shipper", editable = true }
 ```
 
 so `uv run adapter.py` builds this package into the sensor's own virtualenv.
