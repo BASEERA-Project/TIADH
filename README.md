@@ -5,12 +5,12 @@ collector. One shared database holds it; rules turn it into alerts, enrichment
 adds geolocation and scoring, a dashboard makes it readable, and an exporter
 publishes it as a threat feed in JSON, CSV and STIX 2.1.
 
-Two kinds of sensor, answering different questions. **Cowrie** is an SSH shell:
-it records what an attacker typed once they were in. **dionaea** impersonates
-Windows network services — SMB above all — and records what they sent, up to
-and including the malware they tried to plant. Both speak the same envelope, so
-the collector, the rules and the dashboard cannot tell which produced a row
-except by its `protocol`.
+Two kinds of sensor answer different questions. **Cowrie** is an SSH shell: it
+records what an attacker typed once they were in. **dionaea** impersonates
+Windows network services — SMB above all — and records what they sent, up to and
+including the malware they tried to plant. Both speak the same envelope, so the
+collector, the rules and the dashboard cannot tell which produced a row except
+by its `protocol`.
 
 Everything speaks one contract: **Baseline v1.3**, defined in
 `common/src/common/db/schema.sql` and enforced by `common/db/validation.py`.
@@ -44,14 +44,8 @@ dashboard.
 
 **The sensors are the only thing that belongs on other machines.** Everything
 else runs on one host, because the processes share a SQLite file and SQLite
-needs local disk — `common/config.py` says it outright: *"Keep it on local disk
-— SQLite over NFS/SMB corrupts."* The nodes never touch the database; they only
-speak HTTP to the collector.
-
-The alert engine is **not** a separate service. It is a mode of the core CLI:
-`main.py alerts` runs one evaluation pass, `main.py run` runs one full cycle
-(housekeeping → alerts → feed export), and `main.py serve` runs that cycle on a
-timer alongside the collector and the enricher.
+needs local disk. The nodes never touch the database; they only speak HTTP to
+the collector.
 
 ### The processes
 
@@ -63,51 +57,27 @@ timer alongside the collector and the enricher.
 | **Aggregator** | aggregator | `uv run main.py serve` (`core/`) — or `docker compose up -d` | 8000 |
 | **Dashboard** | aggregator | `uv run main.py` (`dashboard/`) — or `docker compose up -d` | 8050 |
 
-What each one actually does:
-
-- **adapter.py** tails its honeypot's JSON log — following it across rotation —
-  maps the events it cares about onto the Baseline v1.3 envelope, and POSTs
-  them in batches with `X-Node-ID` / `X-Node-Key` headers. It sends a heartbeat
-  every 60s, and spools failed batches to `pending_events.jsonl`, retried every
-  30s. Only the mapping differs between the two sensors; the rest is
-  `nodes/shipper/`, which both import.
-- **main.py serve** is the aggregator pipeline, three loops in one process:
-  - *collector* — authenticates the node, validates the envelope, and hands the
-    batch to `Database.apply_events()`. It also runs the housekeeping pass
-    (stale nodes offline, abandoned sessions closed) every 60s, because it is
-    the only always-running writer.
-  - *enricher* — polls `get_ips_needing_enrichment()` every 30s, geolocates each
-    IP (ip-api.com), scores it against AbuseIPDB, computes a local profile score
-    from that IP's own session and command history, and upserts a `reputation`
-    row. The AbuseIPDB half is skipped when no key is configured.
+- **adapter.py** tails its honeypot's JSON log across rotation, maps events onto
+  the Baseline v1.3 envelope, and POSTs them in batches with `X-Node-ID` /
+  `X-Node-Key` headers. Heartbeat every 60s; failed batches spool to
+  `pending_events.jsonl` and retry every 30s. Only the mapping differs between
+  the two sensors — the rest is `nodes/shipper/`, which both import.
+- **main.py serve** runs three loops in one process:
+  - *collector* — authenticates the node, validates the envelope, stores the
+    batch. Also runs housekeeping every 60s (stale nodes offline, abandoned
+    sessions closed).
+  - *enricher* — every 30s, geolocates each new attacker IP (ip-api.com), scores
+    it against AbuseIPDB, computes a local profile score from that IP's own
+    session and command history, and upserts a `reputation` row. The AbuseIPDB
+    half is skipped when no key is configured.
   - *alerts + feed export* — re-evaluates the seven detection rules over a
-    rolling window, writes deduplicated alerts, and rewrites the exported feed
-    files.
+    rolling window, writes deduplicated alerts, rewrites the feed files.
 - **dashboard** opens the database **read-only**. Acknowledging or closing an
-  alert is its only write, and `DASHBOARD_ALLOW_ALERT_ACTIONS=0` removes even
-  that.
+  alert is its only write, and `DASHBOARD_ALLOW_ALERT_ACTIONS=0` removes that.
 
-### Why two commands and not one, or four
-
-The three loops inside `serve` were three terminals because they started life as
-three coursework parts, not because they need to be three processes. They are
-one uv project, one environment, one `HONEYPOT_DB_PATH`, and all three write.
-Running them together means they share a single `Database` handle and therefore
-a single in-process write lock, so their writes queue in memory instead of
-racing for SQLite's file lock. It also removes a duplicated housekeeping pass:
-the collector and the alert cycle were both sweeping stale nodes and sessions.
-
-The dashboard stays out of that process on purpose:
-
-- it is a **separate uv project** with its own environment — Flask, not FastAPI
-  — so folding it in would mean either fusing the two projects or shelling out
-  to `uv run --project ../dashboard`;
-- it opens the database **read-only** while the other three are writers;
-- it makes a **different exposure decision**: the collector binds `0.0.0.0`
-  because the sensors are remote, and the dashboard binds loopback because it
-  renders attacker IPs, session transcripts and the outbound feed;
-- it has to run **alone** against a demo database (see the quick start), and
-  restarting a viewer should never interrupt ingestion.
+The alert engine is a mode of the core CLI, not a service: `main.py alerts` runs
+one evaluation pass, `main.py run` one full cycle (housekeeping → alerts → feed
+export), and `serve` that cycle on a timer.
 
 ---
 
@@ -126,10 +96,9 @@ uv run main.py --db demo/honeypot_demo.db
 Then open <http://127.0.0.1:8050>. The alerts on screen were produced by the
 real rules engine running over the generated events, not written directly.
 
-The Map screen draws attacker origins straight from the enriched coordinates,
-but the sensor end is configuration — the frozen `nodes` table has no latitude
-or longitude — so give the generated nodes somewhere to be if you want the
-strike arcs:
+The Map screen draws attacker origins from the enriched coordinates, but the
+sensor end is configuration — the `nodes` table has no latitude or longitude —
+so give the generated nodes somewhere to be if you want the strike arcs:
 
 ```bash
 DASHBOARD_NODE_COORDS="node-01:24.7136,46.6753; node-02:52.3676,4.9041; node-03:1.3521,103.8198" \
@@ -139,7 +108,7 @@ DASHBOARD_NODE_COORDS="node-01:24.7136,46.6753; node-02:52.3676,4.9041; node-03:
 ### The full pipeline
 
 **1. Start the aggregator** — collector, enricher and alert/export cycle, one
-process, one terminal:
+process:
 
 ```bash
 cp .env.example .env                        # from the repository root
@@ -148,8 +117,8 @@ cd core
 uv run main.py serve
 ```
 
-It creates the schema on first start, so there is no separate init step, and it
-logs which env files it loaded. Ctrl-C stops all three loops.
+It creates the schema on first start, so there is no separate init step. Ctrl-C
+stops all three loops.
 
 **2. Start the dashboard** in a second terminal. It reads the same `.env` and
 therefore the same database — no second configuration step:
@@ -169,18 +138,18 @@ docker compose up -d                        # Cowrie on :2222, dionaea on :21 an
 uv run adapter.py                           # reads the .env beside it
 ```
 
-Confirm the loop closed: `ssh -p 2222 root@<sensor>` for Cowrie, or an FTP
-login attempt against `<sensor>:21` for dionaea, then watch the session appear
-on the dashboard's Sessions screen.
+Confirm the loop closed: `ssh -p 2222 root@<sensor>` for Cowrie, or an FTP login
+attempt against `<sensor>:21` for dionaea, then watch the session appear on the
+dashboard's Sessions screen.
 
 A dionaea sensor publishes a port per service it can report — fourteen of them,
 including 80, which is the one likely to collide with something already on that
-host. See `nodes/dionaea/README.md` ("What gets shipped, and what does not").
+host. See `nodes/dionaea/README.md`.
 
 ### Running the pieces separately
 
 `serve` is a convenience, not a lock-in. Every loop is still its own entry
-point, which is what you want when you are working on one of them:
+point, which is what you want when working on one of them:
 
 ```bash
 cd core && uv run uvicorn --app-dir collector app.main:app --reload
@@ -188,7 +157,7 @@ cd core && uv run enricher/enrich.py
 cd core && uv run main.py watch --interval 30
 ```
 
-`watch` is `serve` without the collector and the enricher — it *does* run the
+`watch` is `serve` without the collector and the enricher — it does run the
 housekeeping sweep, because in that shape nothing else is.
 
 ### In Docker
@@ -205,57 +174,46 @@ docker compose -f dashboard/docker-compose.yml up -d --build   # dashboard, on 1
 ```
 
 Order does not matter. `serve` creates the schema, and until it has, the
-dashboard shows its setup screen and reports unhealthy rather than an empty page.
+dashboard shows its setup screen rather than an empty page.
 
 A dashboard container that does not mount that **same named volume** is not
 looking at the collected data — that mount is the whole integration.
 
-Two defaults change inside a container, both for the same reason and neither
-loosening anything:
-
-| | On the host | In the container | |
-|---|---|---|---|
-| `DASHBOARD_HOST` | `127.0.0.1` | `0.0.0.0` | a loopback bind inside the container's own network namespace would make the published port unreachable |
-| published port | — | `127.0.0.1:8050` | so the loopback decision moves to compose's `ports:` instead of being lost |
-
-To reach the dashboard from the lab network, drop the `127.0.0.1` prefix from
-`ports:` and set `DASHBOARD_SECRET_KEY` first — it signs the session carrying
-the CSRF token for the alert actions. Both compose files take `COLLECTOR_PORT` /
-`DASHBOARD_PORT` from the shell to move a port without a rebuild:
+Inside a container `DASHBOARD_HOST` is `0.0.0.0` and the port is published as
+`127.0.0.1:8050`, so the loopback decision lives in compose's `ports:`. To reach
+the dashboard from the lab network, drop the `127.0.0.1` prefix there and set
+`DASHBOARD_SECRET_KEY` first — it signs the session carrying the CSRF token for
+the alert actions. Either port moves without a rebuild:
 
 ```bash
 DASHBOARD_PORT=9050 docker compose up -d
 ```
 
-`.env` and `.env.secrets` are excluded from the build context on purpose, so a
-container is configured by compose's `environment:` block (which outranks the
-files anyway) or by a secrets manager — not by a file baked into the image.
+`.env` and `.env.secrets` are excluded from the build context, so a container is
+configured by compose's `environment:` block or by a secrets manager — not by a
+file baked into the image.
 
 ### Published images
 
-`.github/workflows/publish-images.yml` builds both images on every commit to
-`main` and pushes them to GHCR, so a deployment host needs no checkout and no
-build:
+`.github/workflows/publish-images.yml` pushes both images to GHCR on every
+commit to `main`, so a deployment host needs no checkout and no build:
 
 ```
 ghcr.io/kaust-is-better-than-u-think/tiadh-core
 ghcr.io/kaust-is-better-than-u-think/tiadh-dashboard
 ```
 
-Each is tagged twice: `latest`, which follows `main`, and `sha-<full commit>`,
-which never moves. Pin a deployment to the SHA — `latest` is for a lab host you
-are happy to have track `main`.
+Each is tagged `latest`, which follows `main`, and `sha-<full commit>`, which
+never moves — pin a deployment to the SHA. While the repository is private,
+pulling needs a login with `read:packages`:
 
 ```bash
 echo "$GITHUB_TOKEN" | docker login ghcr.io -u <username> --password-stdin
 docker pull ghcr.io/kaust-is-better-than-u-think/tiadh-dashboard:latest
 ```
 
-The packages inherit the repository's visibility, so while it is private that
-login is required to pull; a token needs only `read:packages`. The compose files
-still build from source — they are the development path, and nothing about them
-changed. To run a published image instead, add an `image:` line to the service
-and drop `--build`.
+The compose files build from source. To run a published image instead, add an
+`image:` line to the service and drop `--build`.
 
 ---
 
@@ -269,25 +227,21 @@ cp .env.secrets.example .env.secrets  # node keys + the dashboard signing key
 ```
 
 That is the whole setup step. `common/config.py` loads both on import, so the
-collector, the enricher, the alert cycle **and** the dashboard pick them up
-with nothing exported and nothing sourced — they are two separate uv projects
-reading one configuration. Both files are gitignored and excluded from Docker
-build contexts; the `.example` templates are committed.
+collector, the enricher, the alert cycle **and** the dashboard pick them up with
+nothing exported and nothing sourced. Both files are gitignored and excluded
+from Docker build contexts; the `.example` templates are committed.
 
-Secrets are split out so the main template stays boring enough to commit and
-`.env.secrets` is the only file you have to handle carefully.
-
-**A real environment variable always beats the file.** That is what keeps
+**A real environment variable always beats the file**, which is what keeps
 per-run overrides, `--db`, and Docker's `environment:` block working:
 
 ```bash
 FEED_MIN_SEVERITY=high uv run main.py serve     # wins over .env
 ```
 
-The files are parsed as data rather than sourced by the shell, so values with
-spaces (`FEED_PRODUCER`) and JSON braces (`NODE_KEYS_JSON`) do not need
-quoting. Quote a value if it genuinely contains ` #`. Set `TIADH_ENV_FILE` to
-point somewhere else, or to the empty string to ignore the files entirely.
+The files are parsed as data, not sourced by the shell, so values with spaces
+(`FEED_PRODUCER`) and JSON braces (`NODE_KEYS_JSON`) need no quoting — quote
+only a value containing ` #`. Set `TIADH_ENV_FILE` to point somewhere else, or
+to the empty string to ignore the files entirely.
 
 The settings you will actually touch:
 
@@ -302,7 +256,7 @@ The settings you will actually touch:
 | `ALERT_WINDOW_MINUTES` | `5` | How far back each rule looks per pass |
 | `FEED_MIN_SEVERITY` | `medium` | Severity floor for the published feed |
 
-`.env.example` lists all 34 with comments; `common/config.py`,
+`.env.example` lists every setting with comments; `common/config.py`,
 `core/collector/app/config.py` and `dashboard/app/settings.py` are the three
 modules that read them. Detection thresholds live in `common/config.py` and the
 dashboard's rules panel reads them live, so what you see there is what the
@@ -312,7 +266,7 @@ engine is using.
 
 | Flag | Default | |
 |---|---|---|
-| `--host` / `--port` | `COLLECTOR_HOST` / `COLLECTOR_PORT` | Collector bind address, for one run — the persistent setting is the `.env` pair above |
+| `--host` / `--port` | `COLLECTOR_HOST` / `COLLECTOR_PORT` | Collector bind address, for one run |
 | `--interval` | `30` | Seconds between alert/export cycles |
 | `--enrich-interval` | `30` | Seconds between enrichment passes |
 | `--no-enricher` | off | Skip the enricher — it calls ip-api.com and AbuseIPDB, so use this offline |
@@ -321,20 +275,13 @@ engine is using.
 ### Sensor hosts
 
 A sensor is a different machine with no `common` package, so it configures
-itself: copy that node's `.env.example` to `.env` and `adapter.py` loads it via
-python-dotenv, with the same precedence as here — a real environment variable
-beats the file.
-
-It loads that file **by name, from its own directory**, never by searching
-upwards. On a machine with the whole repository checked out, an upward search
-would climb out of `nodes/cowrie/` and find this aggregator `.env` instead,
-which configures a different host entirely.
+itself: copy that node's `.env.example` to `.env` and `adapter.py` loads it from
+its own directory, never by searching upwards.
 
 Three values have to agree with the aggregator: `NODE_ID` must appear in
 `KNOWN_NODES`, `NODE_KEY` must match that node's entry in `NODE_KEYS_JSON`, and
-`COLLECTOR_URL` must name the address the collector is actually bound to —
-`COLLECTOR_HOST`/`COLLECTOR_PORT` written from the other end, with the
-aggregator's routable IP in place of a `0.0.0.0` bind.
+`COLLECTOR_URL` must name the address the collector is actually bound to — with
+the aggregator's routable IP in place of a `0.0.0.0` bind.
 
 ---
 
@@ -350,13 +297,14 @@ common/     the shared library — installed, imported by everything
   alerting/            detection rules + the alert engine
   export/              threat feed builder (JSON / CSV / STIX 2.1)
 core/       the aggregator — one uv project, one process in deployment
-  main.py              CLI: serve, init, seed, ingest, alerts, export, run, watch, stats
-  collector/           FastAPI ingest service (Part 2)
-  enricher/            geolocation + scoring worker (Part 3)
+  main.py              CLI: serve, init, seed, ingest, alerts, export, run,
+                       watch, stats, validate
+  collector/           FastAPI ingest service
+  enricher/            geolocation + scoring worker
   Dockerfile           builds the whole aggregator; CMD is `main.py serve`
-dashboard/  Flask read model over the database (Part 5)
+dashboard/  Flask read model over the database
   Dockerfile           the same read model behind waitress; mounts tiadh_db
-nodes/      sensor deployment (Part 1)
+nodes/      sensor deployment
   shipper/             the sensor half that is not about the honeypot: tail a
                        log across rotation, batch, heartbeat, spool, retry
   cowrie/              docker-compose + Cowrie's event mapping   (SSH)
@@ -369,7 +317,7 @@ nodes/      sensor deployment (Part 1)
 outside the standard library. Nothing imports `core` — not the dashboard, not
 the collector.
 
-### Tests
+## Tests
 
 ```bash
 cd core && uv run pytest          # collector: HTTP, auth, dedupe, contract
@@ -379,40 +327,27 @@ cd core && uv run pytest          # collector: HTTP, auth, dedupe, contract
 
 ## Known rough edges
 
-Things that will bite during a deployment, all of them real as of this commit:
-
 - **The adapter's default log path is relative.** `LOG_PATH` defaults to
-  `./cowrie-logs/cowrie.json`, which is where `docker-compose.yml` mounts the
-  logs — but it resolves against the working directory, so an adapter started
-  from anywhere other than `nodes/cowrie/` finds nothing there. Set an absolute
-  path and stop thinking about it. The dionaea node has the same shape of
-  default and the same problem.
+  `./cowrie-logs/cowrie.json` (and the dionaea equivalent), which is where
+  `docker-compose.yml` mounts the logs — but it resolves against the working
+  directory, so an adapter started from anywhere else finds nothing. Set an
+  absolute path.
 - **`NODE_ID` defaults to a real node ID rather than an error** — `node-02` for
-  the Cowrie sensor, `node-03` for the dionaea one — so a sensor started
-  without one silently claims to be that node. Two sensors of the same kind on
-  one network will both claim it unless each `.env` says otherwise.
-- **A protocol lives in three places.** `sessions.protocol`'s CHECK constraint
-  in `schema.sql`, `ALLOWED_PROTOCOLS` in `common/db/validation.py`, and the
-  sending node's own map. A value in the validator but not the schema is an
-  event the collector accepts and then fails to store. `initialize_schema()`
-  rebuilds `sessions` when it finds a database on the older, narrower list —
-  SQLite cannot alter a CHECK in place — so the aggregator has to be started
-  once on this version before a dionaea node ships anything but FTP or SMB.
-- **The abuse score needs a key to exist at all.** `abuse_score` is now a real
-  AbuseIPDB lookup, but with no `ABUSEIPDB_API_KEY` set the enricher leaves the
-  column NULL — geolocation and the local profile score still work, and
-  `high_risk_ip` then fires on the profile score alone. The enricher says so in
-  its log, once, at startup.
-- **ip-api.com rate-limits to 45 requests a minute** on the free tier, and
-  AbuseIPDB's to 1000 checks a day. A burst of new attacker IPs will start
-  failing lookups. A failed lookup is written as NULL and never as a score of
-  zero — but it is still written, on a fresh `last_updated`, so
-  `get_ips_needing_enrichment()` will not offer that IP again until the row ages
-  past `max_age_days` (7). An IP enriched during an outage keeps its gaps for a
-  week unless you clear its `reputation` row.
+  the Cowrie sensor, `node-03` for the dionaea one — so a sensor started without
+  one silently claims to be that node. Two sensors of the same kind on one
+  network will both claim it unless each `.env` says otherwise.
+- **The abuse score needs a key to exist at all.** With no `ABUSEIPDB_API_KEY`
+  set, the enricher leaves `abuse_score` NULL — geolocation and the local
+  profile score still work, and `high_risk_ip` fires on the profile score alone.
+  The enricher says so in its log at startup.
+- **ip-api.com rate-limits to 45 requests a minute** on the free tier, AbuseIPDB
+  to 1000 checks a day, so a burst of new attacker IPs will start failing
+  lookups. A failed lookup is written as NULL rather than zero — but it is still
+  written, on a fresh `last_updated`, so that IP is not retried for 7 days.
+  Clear its `reputation` row to retry sooner.
 - **One collector test fails.** `test_rejects_bad_command_contract` expects a
   malformed event to return HTTP 200 with `rejected: 1`, but `app/models.py`
-  still validates the `details` contract in the HTTP layer and returns 422.
-  The test and the code disagree about where validation belongs.
-- **Node health is wall-clock based**, so a seeded demo database drifts to
-  amber and then red as real time passes. Re-run the seeder before a demo.
+  validates the `details` contract in the HTTP layer and returns 422. The test
+  and the code disagree about where validation belongs.
+- **Node health is wall-clock based**, so a seeded demo database drifts to amber
+  and then red as real time passes. Re-run the seeder before a demo.
