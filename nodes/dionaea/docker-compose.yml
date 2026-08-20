@@ -1,0 +1,33 @@
+services:
+  dionaea:
+    image: dinotools/dionaea:latest
+    container_name: dionaea-node03
+    restart: unless-stopped
+    # The image copies its config and its per-service document roots out of
+    # /opt/dionaea/template on first start — but only into directories that do
+    # not exist yet, and every bind mount below has already created one. This
+    # forces the copy. It is `cp -n` underneath, so nothing dionaea has written
+    # is ever overwritten and a restart keeps the captures.
+    environment:
+      DIONAEA_FORCE_INIT: "1"
+    # Only the two services this sensor can actually report. dionaea listens on
+    # everything it has enabled, but Baseline v1.3 allows four protocol values
+    # and two of them are these; publishing the rest would invite traffic the
+    # adapter can only count and drop. See README.md ("What gets shipped").
+    #
+    # These are the real service ports on purpose: a scanner has to find FTP on
+    # 21 and SMB on 445. If this host already uses either, move the left-hand
+    # side — nothing downstream cares which port the traffic arrived on.
+    ports:
+      - "21:21"
+      - "445:445"
+    volumes:
+      # dionaea's JSON log — the file adapter.py tails — plus its text logs.
+      - ./dionaea-logs:/opt/dionaea/var/log/dionaea
+      # Captured malware (binaries/), connection recordings (bistreams/), the
+      # SQLite log, and each service's document root.
+      - ./dionaea-data:/opt/dionaea/var/lib/dionaea
+      # Neither of dionaea's JSON handlers is enabled in the image. This is the
+      # one adapter.py expects; see ihandlers-available/log_json.yaml for the
+      # alternative.
+      - ./ihandlers-enabled/log_incident.yaml:/opt/dionaea/etc/dionaea/ihandlers-enabled/log_incident.yaml:ro

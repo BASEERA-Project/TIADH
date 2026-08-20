@@ -1,0 +1,23 @@
+[project]
+name = "dionaea-node"
+version = "0.1.0"
+description = "Honeypot sensor: ships dionaea's events to the aggregator's collector"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # Everything a sensor does that is not about dionaea: tail across rotation,
+    # batch, heartbeat, spool, retry. Shared with the Cowrie sensor, so it is a
+    # sibling directory rather than a package on PyPI — see [tool.uv.sources]
+    # below, and clone the repository rather than copying this directory alone.
+    "shipper",
+]
+
+[project.optional-dependencies]
+# stub_server.py stands in for the collector when testing a sensor on its own.
+# An extra rather than a dependency group, so that the thing a sensor host
+# actually does — `uv run adapter.py` — needs no flag and never installs Flask.
+# Only the stub opts in, with `uv run --extra stub stub_server.py`.
+stub = ["shipper[stub]"]
+
+[tool.uv.sources]
+shipper = { path = "../shipper" }

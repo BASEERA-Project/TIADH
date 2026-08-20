@@ -1,9 +1,16 @@
 # TIADH — Distributed Honeypot Threat Intelligence Aggregator
 
-SSH honeypot sensors on separate hosts ship what attackers do to a central
+Honeypot sensors on separate hosts ship what attackers do to a central
 collector. One shared database holds it; rules turn it into alerts, enrichment
 adds geolocation and scoring, a dashboard makes it readable, and an exporter
 publishes it as a threat feed in JSON, CSV and STIX 2.1.
+
+Two kinds of sensor, answering different questions. **Cowrie** is an SSH shell:
+it records what an attacker typed once they were in. **dionaea** impersonates
+Windows network services — SMB above all — and records what they sent, up to
+and including the malware they tried to plant. Both speak the same envelope, so
+the collector, the rules and the dashboard cannot tell which produced a row
+except by its `protocol`.
 
 Everything speaks one contract: **Baseline v1.3**, defined in
 `common/src/common/db/schema.sql` and enforced by `common/db/validation.py`.
@@ -19,7 +26,7 @@ dashboard.
    SENSOR HOST(S)                          AGGREGATOR HOST
  ┌───────────────────┐          ┌─────────────────────────────────────────────┐
  │ Cowrie      :2222 │          │ main.py serve — one process, three loops    │
- │   ↓ cowrie.json   │  HTTP    │  ┌──────────────┬────────────┬───────────┐  │
+ │  or dionaea :21   │  HTTP    │  ┌──────────────┬────────────┬───────────┐  │
  │ adapter.py ───────┼─────────►│  │ collector    │ enricher   │ alerts +  │  │
  │   batches +       │  POST    │  │ :8000        │ every 30s  │ feed, 30s │  │
  │   heartbeat 60s   │  /api/   │  │ + housekeep  │            │           │  │
@@ -51,17 +58,19 @@ timer alongside the collector and the enricher.
 | Process | Host | Command (from) | Port |
 |---|---|---|---|
 | **Cowrie honeypot** | sensor | `docker compose up -d` (`nodes/cowrie/`) | 2222 |
-| **Node adapter** | sensor | `uv run adapter.py` (`nodes/cowrie/`) | — |
+| **dionaea honeypot** | sensor | `docker compose up -d` (`nodes/dionaea/`) | 21, 445 |
+| **Node adapter** | sensor | `uv run adapter.py` (in that node's directory) | — |
 | **Aggregator** | aggregator | `uv run main.py serve` (`core/`) — or `docker compose up -d` | 8000 |
 | **Dashboard** | aggregator | `uv run main.py` (`dashboard/`) — or `docker compose up -d` | 8050 |
 
 What each one actually does:
 
-- **adapter.py** tails Cowrie's `cowrie.json` — following it across the daily
-  rotation that renames it — maps the events it cares about
-  onto the Baseline v1.3 envelope, and POSTs them in batches with
-  `X-Node-ID` / `X-Node-Key` headers. It sends a heartbeat every 60s, and
-  spools failed batches to `pending_events.jsonl`, retried every 30s.
+- **adapter.py** tails its honeypot's JSON log — following it across rotation —
+  maps the events it cares about onto the Baseline v1.3 envelope, and POSTs
+  them in batches with `X-Node-ID` / `X-Node-Key` headers. It sends a heartbeat
+  every 60s, and spools failed batches to `pending_events.jsonl`, retried every
+  30s. Only the mapping differs between the two sensors; the rest is
+  `nodes/shipper/`, which both import.
 - **main.py serve** is the aggregator pipeline, three loops in one process:
   - *collector* — authenticates the node, validates the envelope, and hands the
     batch to `Database.apply_events()`. It also runs the housekeeping pass
@@ -150,17 +159,24 @@ cd dashboard
 uv run main.py
 ```
 
-**3. On each sensor host**, run Cowrie and the adapter:
+**3. On each sensor host**, run a honeypot and its adapter. The two node
+directories work the same way — pick whichever that host is running:
 
 ```bash
-cd nodes/cowrie
+cd nodes/cowrie                             # or nodes/dionaea
 cp .env.example .env                        # set COLLECTOR_URL and NODE_KEY
-docker compose up -d                        # Cowrie on :2222
+docker compose up -d                        # Cowrie on :2222, dionaea on :21 and :445
 uv run adapter.py                           # reads the .env beside it
 ```
 
-Confirm the loop closed: `ssh -p 2222 root@<sensor>` from anywhere, then watch
-the session appear on the dashboard's Sessions screen.
+Confirm the loop closed: `ssh -p 2222 root@<sensor>` for Cowrie, or an FTP
+login attempt against `<sensor>:21` for dionaea, then watch the session appear
+on the dashboard's Sessions screen.
+
+A dionaea sensor has one thing to read before deploying it: Baseline v1.3
+allows four protocol values, so only its FTP and SMB traffic can be
+represented, and it reports the rest as counts rather than shipping it. See
+`nodes/dionaea/README.md` ("What gets shipped, and what does not").
 
 ### Running the pieces separately
 
@@ -306,7 +322,7 @@ engine is using.
 ### Sensor hosts
 
 A sensor is a different machine with no `common` package, so it configures
-itself: copy `nodes/cowrie/.env.example` to `.env` and `adapter.py` loads it via
+itself: copy that node's `.env.example` to `.env` and `adapter.py` loads it via
 python-dotenv, with the same precedence as here — a real environment variable
 beats the file.
 
@@ -344,8 +360,10 @@ dashboard/  Flask read model over the database (Part 5)
 nodes/      sensor deployment (Part 1)
   shipper/             the sensor half that is not about the honeypot: tail a
                        log across rotation, batch, heartbeat, spool, retry
-  cowrie/              docker-compose + Cowrie's event mapping
-                       its own uv project — no `common`, it runs on another host
+  cowrie/              docker-compose + Cowrie's event mapping   (SSH)
+  dionaea/             docker-compose + dionaea's event mapping  (FTP, SMB)
+                       each its own uv project — no `common`, they run on
+                       other hosts, and both depend on ../shipper by path
 ```
 
 `common` is the only package the others depend on, and it depends on nothing
@@ -368,10 +386,17 @@ Things that will bite during a deployment, all of them real as of this commit:
   `./cowrie-logs/cowrie.json`, which is where `docker-compose.yml` mounts the
   logs — but it resolves against the working directory, so an adapter started
   from anywhere other than `nodes/cowrie/` finds nothing there. Set an absolute
-  path and stop thinking about it.
-- **`NODE_ID` defaults to `node-02`.** It is an environment variable now, but
-  the default is a real node ID rather than an error, so a sensor started
-  without one silently claims to be node-02.
+  path and stop thinking about it. The dionaea node has the same shape of
+  default and the same problem.
+- **`NODE_ID` defaults to a real node ID rather than an error** — `node-02` for
+  the Cowrie sensor, `node-03` for the dionaea one — so a sensor started
+  without one silently claims to be that node. Two sensors of the same kind on
+  one network will both claim it unless each `.env` says otherwise.
+- **Most of what a dionaea sensor sees cannot be shipped.** The baseline allows
+  four protocol values and dionaea speaks twenty; only `ftpd` and `smbd` have
+  somewhere to go. The adapter counts and reports the rest rather than dropping
+  them quietly, and the compose file publishes only the two ports it can
+  represent, but it is a real ceiling on what that node contributes.
 - **The abuse score needs a key to exist at all.** `abuse_score` is now a real
   AbuseIPDB lookup, but with no `ABUSEIPDB_API_KEY` set the enricher leaves the
   column NULL — geolocation and the local profile score still work, and

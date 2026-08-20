@@ -1,0 +1,24 @@
+# Turns on the JSON log adapter.py reads. Mounted into the container over
+# /opt/dionaea/etc/dionaea/ihandlers-enabled/, which is how dionaea enables an
+# ihandler: a file in `ihandlers-enabled` rather than a setting anywhere.
+# Neither of dionaea's JSON handlers is on by default — the image ships
+# log_sqlite, and nothing that writes JSON.
+#
+# The URL is absolute, with three slashes, and that is not a detail. dionaea's
+# own shipped template says `file://var/lib/dionaea/dionaea.json`, which
+# urlparse reads as host 'var' and path '/lib/dionaea/dionaea.json'. Opening
+# that fails, the loader catches it, and the honeypot then runs perfectly
+# normally while writing no JSON at all. The only sign is one line in
+# var/log/dionaea/dionaea.log:
+#
+#   log_incident ...-critical: Unable to open file /lib/dionaea/dionaea_incident.json
+#                              Error message 'No such file or directory'
+#
+# log_incident writes one line per incident: every connection accepted, every
+# credential offered, every command, every file captured, and every close. It
+# is the richer of dionaea's two JSON logs — see this node's README for the
+# comparison, and for how to use log_json instead.
+- name: log_incident
+  config:
+    handlers:
+      - file:///opt/dionaea/var/log/dionaea/dionaea_incident.json

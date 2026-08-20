@@ -1,0 +1,28 @@
+# dionaea's other JSON log, offered as an alternative to log_incident.
+# Not enabled: to use it instead, mount THIS file over
+# /opt/dionaea/etc/dionaea/ihandlers-enabled/log_json.yaml in
+# docker-compose.yml, drop the log_incident mount, and point LOG_PATH at
+# dionaea-logs/dionaea.json. adapter.py reads either format without being told
+# which.
+#
+# What you give up by choosing it, all of it structural rather than a matter of
+# taste — see this node's README:
+#
+#   * no captured malware. log_json handles connections, credentials and FTP
+#     commands, and nothing else. dionaea.download.* incidents pass it by, so
+#     the file_download events stop.
+#   * no connection id, so session ids have to be minted from the address pair.
+#   * one line per connection, written when it closes, and every event in it
+#     dated by when the connection *opened*.
+#
+# What you gain: it is the documented, stable handler, and the one an existing
+# dionaea deployment is most likely to already have on.
+#
+# The absolute three-slash URL matters here too — see log_incident.yaml.
+- name: log_json
+  config:
+    # Set to true for an ELK pipeline. It transposes the credential and command
+    # lists into lists-of-values; adapter.py reads both shapes.
+    # flat_data: true
+    handlers:
+      - file:///opt/dionaea/var/log/dionaea/dionaea.json
