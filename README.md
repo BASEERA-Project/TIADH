@@ -22,25 +22,7 @@ Everything speaks one contract: **Baseline v1.3**, defined in
 Two commands on the aggregator host. One for the pipeline, one for the
 dashboard.
 
-```
-   SENSOR HOST(S)                          AGGREGATOR HOST
- ┌───────────────────┐          ┌─────────────────────────────────────────────┐
- │ Cowrie      :2222 │          │ main.py serve — one process, three loops    │
- │  or dionaea :21   │  HTTP    │  ┌──────────────┬────────────┬───────────┐  │
- │ adapter.py ───────┼─────────►│  │ collector    │ enricher   │ alerts +  │  │
- │   batches +       │  POST    │  │ :8000        │ every 30s  │ feed, 30s │  │
- │   heartbeat 60s   │  /api/   │  │ + housekeep  │            │           │  │
- └───────────────────┘  events  │  └──────────────┴──────┬─────┴───────────┘  │
-      one per node              │                        │ one shared handle  │
-                                │  ┌─────────────────────▼─────────────────┐  │
-                                │  │   honeypot_aggregator.db (SQLite)     │  │
-                                │  └─────────────────────┬─────────────────┘  │
-                                │                        │ reads, read-only   │
-                                │  ┌─────────────────────▼─────────────────┐  │
-                                │  │  dashboard :8050 — its own process    │  │
-                                │  └───────────────────────────────────────┘  │
-                                └─────────────────────────────────────────────┘
-```
+![Project Diagram Representation](project_diagram.png)
 
 **The sensors are the only thing that belongs on other machines.** Everything
 else runs on one host, because the processes share a SQLite file and SQLite
